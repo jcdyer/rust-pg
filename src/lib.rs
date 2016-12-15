@@ -1,12 +1,16 @@
-use std::io;
 use connection::Connection;
 
 pub mod connection;
+pub mod message;
+
 
 mod error {
+    use std::fmt;
+    use std::io;
+    use std::error::Error;
 
     #[derive(Debug)]
-    enum PgError {
+    pub enum PgError {
         Other,
         Io(io::Error),
     }
@@ -15,8 +19,9 @@ mod error {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match *self {
                 PgError::Io(ref err) => err.fmt(f),
-                Other => write!(f, "Unknown error"),
+                PgError::Other => write!(f, "Unknown error"),
             }
+        }
     }
 
     impl Error for PgError {
@@ -36,7 +41,7 @@ mod error {
     }
 }
 
-type PGResult<T> = Result<T, error::PgError>;
+pub type PGResult<T> = Result<T, error::PgError>;
 
 /// This function takes a connection URL, and returns a PGResult with a
 /// Connection object if the connection can be made, or a PGErr otherwise.
@@ -59,6 +64,6 @@ mod tests {
     #[test]
     fn test_connect() {
         let url = "postgres://test.url";
-        assert_eq!(connect(&url), Ok(Connection::new(url)));
+        assert_eq!(connect(&url).unwrap(), Connection::new(url));
     }
 }

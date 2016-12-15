@@ -23,17 +23,27 @@ def receive(sock):
         chunks.append(sock.recv(chunk_size))
     return b''.join(chunks)
 
+def create_message(identifier, body):
+    """
+    Build a message from an identifier and a body
+    """
+    if not identifier:
+        identifier = b''
+    length = struct.pack('!I', len(body) + 4)
+    return b''.join([identifier, length, body])
+
+
 def send_startup_message(sock):
     """
     Send a startup message
     """
     #                 proto_version params                                                terminator
     startup_message = b'\0\x03\0\0' b'database\0' b'cliffdyer\0' b'user\0' b'cliffdyer\0' b'\0'
-    length = struct.pack('!I', len(startup_message) + 4)
-    startup_message = b''.join([length, startup_message])
+    startup_message = create_message(None, startup_message)
     print(repr(startup_message))
     sock.sendall(startup_message)
     return receive(sock)
+
 
 def send_terminate(sock):
     """
@@ -42,6 +52,16 @@ def send_terminate(sock):
     sock.sendall(b'X\0\0\0\x04')
     return receive(sock)
 
+def send_query(sock):
+    """
+    Send a query
+    """
+    query = "SELECT version()\0".encode('utf-8')
+    message = create_message(b'Q', query)
+    sock.sendall(message)
+    return receive(sock)
+
+
 def main():
     """
     Connect to postgres server.
@@ -49,9 +69,11 @@ def main():
     with closing(socket.socket(socket.AF_UNIX)) as sock:
         sock.connect(unix_socket)
         response = send_startup_message(sock)
-        print(response)
+        print("Startup response", response)
+        response = send_query(sock)
+        print("Query response", response)
         response = send_terminate(sock)
-        print(response)
+        print("Terminate response", response)
     print("done")
 
 
