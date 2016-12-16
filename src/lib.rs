@@ -1,24 +1,28 @@
+use std::io;
+use std::result;
 use connection::Connection;
 
 pub mod connection;
 pub mod message;
 
-
-mod error {
+pub mod error {
     use std::fmt;
     use std::io;
+    use std::net;
     use std::error::Error;
 
     #[derive(Debug)]
     pub enum PgError {
         Other,
         Io(io::Error),
+        IP(net::AddrParseError),
     }
 
     impl fmt::Display for PgError {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match *self {
                 PgError::Io(ref err) => err.fmt(f),
+                PgError::IP(ref err) => err.fmt(f),
                 PgError::Other => write!(f, "Unknown error"),
             }
         }
@@ -28,6 +32,7 @@ mod error {
         fn description(&self) -> &str {
             match *self {
                 PgError::Io(ref err) => err.description(),
+                PgError::IP(ref err) => err.description(),
                 PgError::Other => "An error occurred",
             }
         }
@@ -35,35 +40,14 @@ mod error {
         fn cause(&self) -> Option<&Error> {
             match *self {
                 PgError::Io(ref err) => Some(err),
+                PgError::IP(ref err) => Some(err),
                 PgError::Other => None,
             }
         }
     }
 }
 
-pub type PGResult<T> = Result<T, error::PgError>;
-
-/// This function takes a connection URL, and returns a PGResult with a
-/// Connection object if the connection can be made, or a PGErr otherwise.
-///
-/// ```
-/// use pg::connect;
-/// use pg::connection::Connection;
-/// assert!(connect("postgres://server.com/db").is_ok())
-/// ```
-pub fn connect(url: &str) -> PGResult<Connection> {
-    Ok(Connection::new(url))
-}
+pub type Result<T> = result::Result<T, error::PgError>;
 
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use super::connection::Connection;
 
-    #[test]
-    fn test_connect() {
-        let url = "postgres://test.url";
-        assert_eq!(connect(&url).unwrap(), Connection::new(url));
-    }
-}

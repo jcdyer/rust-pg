@@ -1,6 +1,6 @@
 use std::mem::transmute;
 
-trait Message {
+pub trait Message {
     fn get_id(&self) -> Option<u8>;
     fn get_body(&self) -> Vec<u8> {
         vec!()
@@ -29,11 +29,11 @@ enum TransactionStatus {
 // Message types
 
 #[derive(Debug, Eq, PartialEq)]
-struct StartupMessage {
-    version: (u8, u8),
-    user: String,
-    database: Option<String>,
-    params: Vec<(String, String)>,
+pub struct StartupMessage {
+    pub version: (u8, u8),
+    pub user: String,
+    pub database: Option<String>,
+    pub params: Vec<(String, String)>,
 }
 
 impl Message for StartupMessage {
@@ -42,6 +42,7 @@ impl Message for StartupMessage {
     }
     fn get_body(&self) -> Vec<u8> {
         let mut body: Vec<u8> = vec!();
+        body.extend(&[0, 0x3, 0, 0]);
         body.extend("user\0".as_bytes());
         body.extend(self.user.as_bytes());
         body.push(0);
@@ -75,7 +76,7 @@ impl Message for Terminate {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Query {
-    query: String,
+    pub query: String,
 }
 
 impl Message for Query {
@@ -85,7 +86,7 @@ impl Message for Query {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct ReadyForQuery {
+pub struct ReadyForQuery {
     status: TransactionStatus
 }
 
@@ -132,7 +133,6 @@ impl Message for ParameterStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::Message;
 
     #[test]
     fn test_terminate() {
