@@ -4,6 +4,7 @@ use connection::Connection;
 
 pub mod connection;
 pub mod message;
+pub mod servermsg;
 
 pub mod error {
     use std::fmt;
