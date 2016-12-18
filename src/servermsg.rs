@@ -14,11 +14,12 @@ fn _ascii_byte(input: &str) -> u8 {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ServerMsg<'a> {
+    Error(&'a[u8]),
+    Notification(&'a[u8]),
     Auth(AuthMsg<'a>),
     ReadyForQuery,
     ParamStatus(&'a[u8], &'a[u8]),
-    Error(&'a[u8]),
-    Notification(&'a[u8]),
+    BackendKeyData(u32, u32),
     RowDescription(&'a[u8]),
     RowData(&'a[u8]),
     Unknown(&'a[u8]),
@@ -36,9 +37,9 @@ impl <'a> ServerMsg<'a> {
         }
         let identifier = message.get(0).unwrap();
         let (_, extra) = message.split_at(5);
-        if identifier == &_ascii_byte("R") {
+        if identifier == &b'R' {
             AuthMsg::from_slice(message).map(ServerMsg::Auth)
-        } else if identifier == &_ascii_byte("S") {  // Parameter Status
+        } else if identifier == &b'S' {  // Parameter Status
             let mut param_iter = extra.split(|c| c == &0); // split on nulls
             let name = param_iter.next().unwrap();
             let value = param_iter.next().unwrap();
@@ -48,11 +49,13 @@ impl <'a> ServerMsg<'a> {
             } else {
                 Ok(ServerMsg::ParamStatus(name, value))
             }
-        } else if identifier == &_ascii_byte("T") {  // Row Description
+        } else if identifier == &b'K' {  // Row Description
+            Ok(ServerMsg::Unknown(extra))  // TBD
+        } else if identifier == &b'T' {  // Row Description
             Ok(ServerMsg::RowDescription(extra))  // TBD
-        } else if identifier == &_ascii_byte("D") {  // Data Row
+        } else if identifier == &b'D' {  // Data Row
             Ok(ServerMsg::RowData(extra))  // TBD
-        } else if identifier == &_ascii_byte("Z") {  // ReadyForQuery
+        } else if identifier == &b'Z' {  // ReadyForQuery
             Ok(ServerMsg::ReadyForQuery)
         } else {
             Err(PgError::Other)
@@ -89,15 +92,19 @@ impl <'a> AuthMsg<'a> {
 }
 
 pub fn take_msg(input: &[u8]) -> Result<(&[u8], &[u8])> {
-    let length: usize = 
-        ((input[1] as usize) << 24) + 
-        ((input[2] as usize) << 16) + 
-        ((input[3] as usize) << 8) +
-        (input[4] as usize);
-    if input.len() < length + 1 {
+    if input.len() < 5 {
         Err(PgError::Other)
     } else {
-        Ok(input.split_at(length + 1))
+        let length: usize = 
+            ((input[1] as usize) << 24) + 
+            ((input[2] as usize) << 16) + 
+            ((input[3] as usize) << 8) +
+            (input[4] as usize);
+        if input.len() < length + 1 {
+            Err(PgError::Other)
+        } else {
+            Ok(input.split_at(length + 1))
+        }
     }
 }
 
@@ -123,19 +130,85 @@ mod tests {
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
         assert_eq!(msg, ServerMsg::Auth(AuthMsg::AuthOk));
+        assert_eq!(buffer.len(), 314);
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
-        assert_eq!( 
-            msg,
-            ServerMsg::ParamStatus("application_name".as_bytes(), "".as_bytes())
+        assert_eq!(msg, ServerMsg::ParamStatus("application_name".as_bytes(), "".as_bytes()));
+        assert_eq!(buffer.len(), 291);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::ParamStatus("client_encoding".as_bytes(), "UTF8".as_bytes()));
+        assert_eq!(buffer.len(), 265);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::ParamStatus("DateStyle".as_bytes(), "ISO, MDY".as_bytes()));
+        assert_eq!(buffer.len(), 241);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::ParamStatus("integer_datetimes".as_bytes(), "on".as_bytes()));
+        assert_eq!(buffer.len(), 215);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::ParamStatus("IntervalStyle".as_bytes(), "postgres".as_bytes()));
+        assert_eq!(buffer.len(), 187);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::ParamStatus("is_superuser".as_bytes(), "off".as_bytes()));
+        assert_eq!(buffer.len(), 165);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::ParamStatus("server_encoding".as_bytes(), "UTF8".as_bytes()));
+        assert_eq!(buffer.len(), 139);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::ParamStatus("server_version".as_bytes(), "9.6.1".as_bytes()));
+        assert_eq!(buffer.len(), 113);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(
+            msg, 
+            ServerMsg::ParamStatus("session_authorization".as_bytes(), "cliff".as_bytes())
         );
+        assert_eq!(buffer.len(), 80);
+
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
-        assert_eq!( msg, ServerMsg::ParamStatus("client_encoding".as_bytes(), "UTF8".as_bytes()));
-        assert_eq!( buffer.len(), 265);
+        assert_eq!(
+            msg,
+            ServerMsg::ParamStatus("standard_conforming_strings".as_bytes(), "on".as_bytes()));
+        assert_eq!(buffer.len(), 44);
+
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
-        assert_eq!( msg, ServerMsg::ParamStatus("DateStyle".as_bytes(), "ISO, MDY".as_bytes()));
-        assert_eq!( buffer.len(), 241);
+        assert_eq!(msg, ServerMsg::ParamStatus("TimeZone".as_bytes(), "US/Eastern".as_bytes()));
+        assert_eq!(buffer.len(), 19);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert!(
+            match msg {
+                ServerMsg::Unknown(x) => {
+                    assert_eq!(x.len(), 8);
+                    true
+                },
+                _ => false,
+            }
+        );
+        assert_eq!(buffer.len(), 6);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::ReadyForQuery);
+        assert_eq!(buffer.len(), 0);
+
+        assert!(take_msg(buffer).is_err())
     }
 }
