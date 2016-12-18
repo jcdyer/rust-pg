@@ -12,6 +12,7 @@ fn _ascii_byte(input: &str) -> u8 {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum ServerMsg<'a> {
     Auth(AuthMsg<'a>),
     ReadyForQuery,
@@ -59,6 +60,7 @@ impl <'a> ServerMsg<'a> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum AuthMsg<'a> {
     AuthOk,
     AuthCleartext,
@@ -117,34 +119,23 @@ mod tests {
     fn test_server_response_parse() {
         /// Test a realistic example of a server response.  Need this buffer in bytes, but it's not all utf-8
 
-        let buffer = "R\x00\x00\x00\x08\x00\x00\x00\x00S\x00\x00\x00\x16application_name\x00\x00S\x00\x00\x00\x19client_encoding\x00UTF8\x00S\x00\x00\x00\x17DateStyle\x00ISO, MDY\x00S\x00\x00\x00\x19integer_datetimes\x00on\x00S\x00\x00\x00\x1bIntervalStyle\x00postgres\x00S\x00\x00\x00\x15is_superuser\x00off\x00S\x00\x00\x00\x19server_encoding\x00UTF8\x00S\x00\x00\x00\x19server_version\x009.6.1\x00S\x00\x00\x00 session_authorization\x00cliff\x00S\x00\x00\x00#standard_conforming_strings\x00on\x00S\x00\x00\x00\x18TimeZone\x00US/Eastern\x00K\x00\x00\x00\x0c\x00\x00\x17\u00bb\x15b\u00fb1Z\x00\x00\x00\x05I";
-        let (next, buffer) = take_msg(buffer);
-        let msg = ServerMsg::from_bytes(next).unwrap();
-        assert_eq!(
+        let buffer = b"R\x00\x00\x00\x08\x00\x00\x00\x00S\x00\x00\x00\x16application_name\x00\x00S\x00\x00\x00\x19client_encoding\x00UTF8\x00S\x00\x00\x00\x17DateStyle\x00ISO, MDY\x00S\x00\x00\x00\x19integer_datetimes\x00on\x00S\x00\x00\x00\x1bIntervalStyle\x00postgres\x00S\x00\x00\x00\x15is_superuser\x00off\x00S\x00\x00\x00\x19server_encoding\x00UTF8\x00S\x00\x00\x00\x19server_version\x009.6.1\x00S\x00\x00\x00 session_authorization\x00cliff\x00S\x00\x00\x00#standard_conforming_strings\x00on\x00S\x00\x00\x00\x18TimeZone\x00US/Eastern\x00K\x00\x00\x00\x0c\x00\x00\x17\xbb\x15b\xfb1Z\x00\x00\x00\x05I";
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::Auth(AuthMsg::AuthOk));
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!( 
             msg,
-            ServerMsg::Auth(AuthMsg::AuthOk),
+            ServerMsg::ParamStatus("application_name".as_bytes(), "".as_bytes())
         );
-        let (next, buffer) = take_msg(buffer);
-        let msg = ServerMsg::from_bytes(next).unwrap();
-        assert_eq!(
-            msg,
-            ServerMsg::ParamStatus("application_name".as_bytes(), "".as_bytes()),
-        );
-        let (next, buffer) = take_msg(buffer);
-        let msg = ServerMsg::from_bytes(next).unwrap();
-        assert_eq!(
-            msg,
-            ServerMsg::ParamStatus("client_encoding".as_bytes(), "UTF8".as_bytes()),
-        );
-        let (next, buffer) = take_msg(buffer);
-        let msg = ServerMsg::from_bytes(next).unwrap();
-        assert_eq!(
-            msg,
-            ServerMsg::ParamStatus("DateStyle".as_bytes(), "ISO, MDY".as_bytes()),
-        );
-        assert_eq!(
-            buffer.len(),
-            24
-        );
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!( msg, ServerMsg::ParamStatus("client_encoding".as_bytes(), "UTF8".as_bytes()));
+        assert_eq!( buffer.len(), 265);
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!( msg, ServerMsg::ParamStatus("DateStyle".as_bytes(), "ISO, MDY".as_bytes()));
+        assert_eq!( buffer.len(), 241);
     }
 }
