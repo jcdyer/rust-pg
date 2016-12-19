@@ -25,7 +25,6 @@ impl Connection {
 
         let mut buf: Vec<u8> = vec!();
         let startup = StartupMessage {
-            version: (3, 0),
             user: user.clone(),
             database: Some(database.clone()),
             params: vec!(),

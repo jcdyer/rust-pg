@@ -30,7 +30,6 @@ enum TransactionStatus {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct StartupMessage {
-    pub version: (u8, u8),
     pub user: String,
     pub database: Option<String>,
     pub params: Vec<(String, String)>,
@@ -41,8 +40,8 @@ impl Message for StartupMessage {
         None
     }
     fn get_body(&self) -> Vec<u8> {
-        let mut body: Vec<u8> = vec!();
-        body.extend(&[0, 0x3, 0, 0]);
+        let mut body: Vec<u8> = Vec::with_capacity(256);
+        body.extend(&[0, 3, 0, 0]);
         body.extend("user\0".as_bytes());
         body.extend(self.user.as_bytes());
         body.push(0);
@@ -85,51 +84,6 @@ impl Message for Query {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct ReadyForQuery {
-    status: TransactionStatus
-}
-
-impl Message for ReadyForQuery {
-    fn get_id(&self) -> Option<u8> {
-        Some(0x5a)  //'Z'
-    }
-
-    fn get_body(&self) -> Vec<u8> {
-        let mut v = Vec::with_capacity(1);
-        v.extend(
-            match self.status {
-                TransactionStatus::Idle => "I".as_bytes(),
-                TransactionStatus::Transaction => "T".as_bytes(),
-                TransactionStatus::Failed => "E".as_bytes(),
-            }
-        );
-        v
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct ParameterStatus {
-    param: String,
-    value: String,
-}
-
-impl Message for ParameterStatus {
-    fn get_id(&self) -> Option<u8> {
-        Some(0x53)  // 'S'
-    }
-    fn get_body(&self) -> Vec<u8> {
-        let param_bytes = self.param.as_bytes();
-        let value_bytes = self.value.as_bytes();
-        let mut v = Vec::with_capacity(param_bytes.len() + value_bytes.len() + 2);
-        v.extend(param_bytes);
-        v.push(0);
-        v.extend(value_bytes);
-        v.push(0);
-        v
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,16 +92,24 @@ mod tests {
     fn test_terminate() {
         assert_eq!(
             Terminate.to_bytes(),
-            [0x58, 0x0, 0x0, 0x0, 0x4u8]
-        )
+            b"\x58\0\0\0\x04"
+        );
+            // [0x58, 0, 0, 0, 4]
     }
 
     #[test]
-    fn test_parameter_status() {
-        let msg = ParameterStatus { param: "name".to_string(), value: "Theseus".to_string() };
+    fn test_startup_message() {
+        let msg = StartupMessage {
+            user: "cliff".to_string(),
+            database: None,
+            params: vec![
+                ("name".to_string(), "Theseus".to_string()), 
+                ("vessel".to_string(), "ship".to_string()),
+            ],
+        };
         assert_eq!(
-            msg.to_bytes(),
-            [0x53, 0x0, 0x0, 0x0, 0x11, 0x6e, 0x61, 0x6d, 0x65, 0x0, 0x54, 0x68, 0x65, 0x73, 0x65, 0x75, 0x73, 0x0]
+            &msg.to_bytes()[..],
+            &b"\0\0\0\x2d\x00\x03\x00\x00user\0cliff\0name\0Theseus\0vessel\0ship\0\0"[..]
         );
     }
 }
