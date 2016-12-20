@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn test_server_response_parse() {
+    fn test_server_startup_response_parsing() {
         let buffer = b"R\x00\x00\x00\x08\x00\x00\x00\x00S\x00\x00\x00\x16application_name\x00\x00S\x00\x00\x00\x19client_encoding\x00UTF8\x00S\x00\x00\x00\x17DateStyle\x00ISO, MDY\x00S\x00\x00\x00\x19integer_datetimes\x00on\x00S\x00\x00\x00\x1bIntervalStyle\x00postgres\x00S\x00\x00\x00\x15is_superuser\x00off\x00S\x00\x00\x00\x19server_encoding\x00UTF8\x00S\x00\x00\x00\x19server_version\x009.6.1\x00S\x00\x00\x00 session_authorization\x00cliff\x00S\x00\x00\x00#standard_conforming_strings\x00on\x00S\x00\x00\x00\x18TimeZone\x00US/Eastern\x00K\x00\x00\x00\x0c\x00\x00\x17\xbb\x15b\xfb1Z\x00\x00\x00\x05I";
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
@@ -221,4 +221,30 @@ mod tests {
 
         assert!(take_msg(buffer).is_err())
     }
+
+    #[test]
+    fn test_server_query_response_parsing() {
+        let buffer = b"T\x00\x00\x00 \x00\x01version\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x19\xff\xff\xff\xff\xff\xff\x00\x00D\x00\x00\x00_\x00\x01\x00\x00\x00UPostgreSQL 9.6.1 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 6.2.1 20160830, 64-bitC\x00\x00\x00\rSELECT 1\x00Z\x00\x00\x00\x05I";
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::RowDescription(b"TimeZone"));
+        assert_eq!(buffer.len(), 116);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::RowData(b"TimeZone"));
+        assert_eq!(buffer.len(), 20);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::RowDescription(b"TimeZone"));
+        assert_eq!(buffer.len(), 0);
+
+        let (next, buffer) = take_msg(buffer).unwrap();
+        let msg = ServerMsg::from_slice(next).unwrap();
+        assert_eq!(msg, ServerMsg::ReadyForQuery);
+        assert_eq!(buffer.len(), 0);
+    }
+
 }
