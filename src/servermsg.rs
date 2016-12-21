@@ -2,6 +2,26 @@ use std::str::from_utf8;
 use super::Result;
 use super::error::PgError;
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum FieldFormat {
+    Text,
+    Binary
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct FieldDescription<'a> {
+    field_name: &'a str,
+    format: FieldFormat
+}
+
+impl FieldDescription {
+    fn take_field(input: &[u8]) -> (&[u8], &[u8]) {
+        (input, b"")
+    }
+    fn from_slice(input: &[u8]) -> FieldDescription {
+    }
+}
+
 fn slice_to_u32(input: &[u8]) -> u32 {
     if input.len() != 4 { 
         panic!("Expected four bytes");
@@ -10,6 +30,18 @@ fn slice_to_u32(input: &[u8]) -> u32 {
     for x in input {
         value <<= 8;
         value += *x as u32;
+    }
+    value
+}
+
+fn slice_to_u16(input: &[u8]) -> u16 {
+    if input.len() != 2 {
+        panic!("Expected two bytes");
+    }
+    let mut value: u16 = 0;
+    for x in input {
+        value <<= 8;
+        value += *x as u16;
     }
     value
 }
@@ -30,9 +62,10 @@ pub enum ServerMsg<'a> {
     Notification(&'a[u8]),
     Auth(AuthMsg<'a>),
     ReadyForQuery,
+    CommandComplete(&'a str),
     ParamStatus(&'a str, &'a str),
     BackendKeyData(u32, u32),
-    RowDescription(&'a[u8]),  // TBD
+    RowDescription(Vec<FieldDescription<'a>>),  // TBD
     RowData(&'a[u8]),  // TBD
     Unknown(&'a[u8]),  // TBD
 }
@@ -44,9 +77,9 @@ impl <'a> ServerMsg<'a> {
             return Err(PgError::Other)
         }
         let identifier = message.get(0).unwrap();
-        let (_, extra) = message.split_at(5);
+        let (_, mut extra) = message.split_at(5);
         if identifier == &b'R' {
-            AuthMsg::from_slice(message).map(ServerMsg::Auth)
+            AuthMsg::from_slice(extra).map(ServerMsg::Auth)
         } else if identifier == &b'S' {  // Parameter Status
             let mut param_iter = extra.split(|c| c == &0); // split on nulls
             let name = from_utf8(param_iter.next().unwrap()).unwrap();
@@ -62,9 +95,31 @@ impl <'a> ServerMsg<'a> {
             let key = slice_to_u32(&extra[4..]);
             Ok(ServerMsg::BackendKeyData(pid, key))  
         } else if identifier == &b'T' {  // Row Description
-            Ok(ServerMsg::RowDescription(extra))  // TBD
+            let field_count = slice_to_u16(&extra[..2]);
+            let mut extra = &extra[2..];
+            let mut fields = vec![];
+
+            for i in [..field_count].iter() {
+                let mut split = extra.splitn(2, |c| c == &0);
+                let field_name_bytes = split.next().unwrap();
+                let field_name = from_utf8(field_name_bytes).unwrap();
+                extra = split.next().unwrap();
+                let format_bytes = &extra[16..18];
+                extra = &extra[18..];
+                fields.push(
+                    FieldDescription: {
+                        field_name: field_name,
+                        format: FieldFormat::Text,
+                    }
+                );
+            }
+            Ok(ServerMsg::RowDescription(fields))  // TBD
         } else if identifier == &b'D' {  // Data Row
+            // TBD
             Ok(ServerMsg::RowData(extra))  // TBD
+        } else if identifier == &b'C' {  // Row Description
+            let command_tag = from_utf8(&extra).unwrap();
+            Ok(ServerMsg::CommandComplete(command_tag))
         } else if identifier == &b'Z' {  // ReadyForQuery
             Ok(ServerMsg::ReadyForQuery)
         } else {
@@ -89,28 +144,24 @@ pub enum AuthMsg<'a> {
 
 
 impl <'a> AuthMsg<'a> {
-    pub fn from_slice(message: &'a [u8]) -> Result<AuthMsg> {
-        let identifier = message.get(0).expect("input not long enough");
-        if identifier != &_ascii_byte("R") {
-            Err(PgError::Other)
-        } else {
-            Ok(match slice_to_u32(&message[5..9]) {
-                0 => AuthMsg::Ok,
-                2 => AuthMsg::Kerberos,
-                3 => AuthMsg::Cleartext,
-                5 => {
-                    let salt = &message[9 .. 13];
-                    AuthMsg::Md5(salt)
-                },
-                6 => AuthMsg::ScmCredential,
-                7 => AuthMsg::Gss,
-                8 => {
-                    let gss_data = &message[9 .. 13];
-                    AuthMsg::GssContinue(gss_data)
-                },
-                9 => AuthMsg::Sspi,
-                _ => AuthMsg::Unknown,
-            })
+    pub fn from_slice(extra: &'a [u8]) -> Result<AuthMsg> {
+        match slice_to_u32(&extra[0..4]) {
+            0 => Ok(AuthMsg::Ok),
+            2 => Ok(AuthMsg::Kerberos),
+            3 => Ok(AuthMsg::Cleartext),
+            5 => {
+                let salt = &extra[4..8];
+                Ok(AuthMsg::Md5(salt))
+            },
+            6 => Ok(AuthMsg::ScmCredential),
+            7 => Ok(AuthMsg::Gss),
+            8 => {
+                let gss_data = &extra[4..8];
+                Ok(AuthMsg::GssContinue(gss_data))
+            },
+            9 => Ok(AuthMsg::Sspi),
+            1|4|10...255 => Ok(AuthMsg::Unknown),
+            _ => Err(PgError::Other)
         }
     }
 }
@@ -228,17 +279,25 @@ mod tests {
 
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
-        assert_eq!(msg, ServerMsg::RowDescription(b"TimeZone"));
+        assert_eq!(
+            msg,
+            ServerMsg::RowDescription(
+                vec![FieldDescription { 
+                    field_name: "version",
+                    format: FieldFormat::Text,
+                }]
+            )
+        );
         assert_eq!(buffer.len(), 116);
 
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
-        assert_eq!(msg, ServerMsg::RowData(b"TimeZone"));
+        assert_eq!(msg, ServerMsg::RowData(b"PostgreSQL 9.6.1 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 6.2.1 20160830, 64-bit"));
         assert_eq!(buffer.len(), 20);
 
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
-        assert_eq!(msg, ServerMsg::RowDescription(b"TimeZone"));
+        assert_eq!(msg, ServerMsg::CommandComplete("SELECT 1"));
         assert_eq!(buffer.len(), 0);
 
         let (next, buffer) = take_msg(buffer).unwrap();
@@ -246,5 +305,4 @@ mod tests {
         assert_eq!(msg, ServerMsg::ReadyForQuery);
         assert_eq!(buffer.len(), 0);
     }
-
 }
