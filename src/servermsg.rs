@@ -1,6 +1,7 @@
 use std::str::from_utf8;
-use super::Result;
-use super::error::PgError;
+use Result;
+use error::PgError;
+
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum FieldFormat {
@@ -29,24 +30,28 @@ fn find_first<T: Eq>(input: &[T], matched: T) -> Option<usize> {
     }
 }
 
+fn take_cstring_plus_fixed<'a>(input: &'a[u8], fixed: usize) -> Result<(&'a str, &'a[u8], &'a[u8])> {
+    let strlen = find_first(input, b'\0');
+    match strlen {
+        Some(strlen) => {
+            let string = from_utf8(&input[..strlen]).unwrap();
+            let fixed = &input[strlen+1..strlen+1+fixed];
+            let extra = &input[strlen+1+fixed..];
+            Ok((string, fixed, extra))
+        },
+        None => Err(PgError::Other)
+    }
+}
+
 impl <'a> FieldDescription<'a> {
-    fn take_field(input: &'a[u8]) -> Result<(&'a [u8], &'a [u8])> {
-        let length = find_first(input, b'\0').map(|x| x + 19);
-        match length {
-            Some(length) => {
-                Ok((&input[..length], &input[length..]))
-            },
-            None => Err(PgError::Other)
-        } 
+    fn take_field(input: &'a[u8]) -> Result<(&'a str, &'a[u8], &'a[u8])> {
+        take_cstring_plus_fixed(input, 18)
     }
 
     fn from_slice(input: &[u8]) -> Result<FieldDescription> {
         let mut input_iter = input.splitn(2, |c| c == &b'\0');
         let field_name = from_utf8(input_iter.next().unwrap()).unwrap();
-        println!("FN: {:?}", field_name);
         let remainder = input_iter.next().unwrap();
-        println!("Rem: {:?}", remainder);
-        println!("Else? {:?}", input_iter.next());
         let format = match slice_to_u16(&remainder[16..18]) {
             0 => FieldFormat::Text,
             1 => FieldFormat::Binary,
@@ -94,6 +99,11 @@ fn _ascii_byte(input: &str) -> u8 {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct FieldData<'a> {
+    data: &'a[u8],
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum ServerMsg<'a> {
     Error(&'a[u8]),
     Notification(&'a[u8]),
@@ -103,7 +113,7 @@ pub enum ServerMsg<'a> {
     ParamStatus(&'a str, &'a str),
     BackendKeyData(u32, u32),
     RowDescription(Vec<FieldDescription<'a>>),  // TBD
-    RowData(&'a[u8]),  // TBD
+    DataRow(Vec<FieldData<'a>>),  // TBD
     Unknown(&'a[u8]),  // TBD
 }
 
@@ -145,7 +155,7 @@ impl <'a> ServerMsg<'a> {
             Ok(ServerMsg::RowDescription(fields))  // TBD
         } else if identifier == &b'D' {  // Data Row
             // TBD
-            Ok(ServerMsg::RowData(extra))  // TBD
+            Ok(ServerMsg::DataRow(vec![FieldData { data: extra }]))  // TBD
         } else if identifier == &b'C' {  // Row Description
             let command_tag = from_utf8(&extra).unwrap();
             Ok(ServerMsg::CommandComplete(command_tag))
@@ -321,7 +331,7 @@ mod tests {
 
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
-        assert_eq!(msg, ServerMsg::RowData(b"PostgreSQL 9.6.1 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 6.2.1 20160830, 64-bit"));
+        assert_eq!(msg, ServerMsg::DataRow(vec![FieldData { data: b"PostgreSQL 9.6.1 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 6.2.1 20160830, 64-bit" }]));
         assert_eq!(buffer.len(), 20);
 
         let (next, buffer) = take_msg(buffer).unwrap();
