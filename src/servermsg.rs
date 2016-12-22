@@ -14,11 +14,48 @@ pub struct FieldDescription<'a> {
     format: FieldFormat
 }
 
-impl FieldDescription {
-    fn take_field(input: &[u8]) -> (&[u8], &[u8]) {
-        (input, b"")
+fn find_first<T: Eq>(input: &[T], matched: T) -> Option<usize> {
+    let mut x = input.len();
+    for i in 0..input.len() {
+        if input[i] == matched {
+            x = i;
+            break
+        }
     }
-    fn from_slice(input: &[u8]) -> FieldDescription {
+    if x == input.len() {
+        None
+    } else {
+        Some(x)
+    }
+}
+
+impl <'a> FieldDescription<'a> {
+    fn take_field(input: &'a[u8]) -> Result<(&'a [u8], &'a [u8])> {
+        let length = find_first(input, b'\0').map(|x| x + 19);
+        match length {
+            Some(length) => {
+                Ok((&input[..length], &input[length..]))
+            },
+            None => Err(PgError::Other)
+        } 
+    }
+
+    fn from_slice(input: &[u8]) -> Result<FieldDescription> {
+        let mut input_iter = input.splitn(2, |c| c == &b'\0');
+        let field_name = from_utf8(input_iter.next().unwrap()).unwrap();
+        println!("FN: {:?}", field_name);
+        let remainder = input_iter.next().unwrap();
+        println!("Rem: {:?}", remainder);
+        println!("Else? {:?}", input_iter.next());
+        let format = match slice_to_u16(&remainder[16..18]) {
+            0 => FieldFormat::Text,
+            1 => FieldFormat::Binary,
+            _ => return Err(PgError::Other),
+        };
+        Ok(FieldDescription {
+            field_name: field_name,
+            format: format,
+        })
     }
 }
 
@@ -100,18 +137,10 @@ impl <'a> ServerMsg<'a> {
             let mut fields = vec![];
 
             for i in [..field_count].iter() {
-                let mut split = extra.splitn(2, |c| c == &0);
-                let field_name_bytes = split.next().unwrap();
-                let field_name = from_utf8(field_name_bytes).unwrap();
-                extra = split.next().unwrap();
-                let format_bytes = &extra[16..18];
-                extra = &extra[18..];
-                fields.push(
-                    FieldDescription: {
-                        field_name: field_name,
-                        format: FieldFormat::Text,
-                    }
-                );
+                let (fd, rem) = FieldDescription::take_field(extra).unwrap();
+                let fd = FieldDescription::from_slice(fd).unwrap();
+                fields.push(fd);
+                extra = rem;
             }
             Ok(ServerMsg::RowDescription(fields))  // TBD
         } else if identifier == &b'D' {  // Data Row
