@@ -1,6 +1,7 @@
 use std::str::from_utf8;
 use Result;
 use error::PgError;
+use self::erg::*;
 
 
 #[derive(Debug, Eq, PartialEq)]
@@ -9,38 +10,74 @@ pub enum FieldFormat {
     Binary
 }
 
+mod erg {
+    use std::str::from_utf8;
+    use Result;
+    use error::PgError;
+
+    pub fn find_first<T: Eq>(input: &[T], matched: T) -> Option<usize> {
+        let mut x = input.len();
+        for i in 0..input.len() {
+            if input[i] == matched {
+                x = i;
+                break
+            }
+        }
+        if x == input.len() {
+            None
+        } else {
+            Some(x)
+        }
+    }
+
+    pub fn slice_to_u32(input: &[u8]) -> u32 {
+        if input.len() != 4 { 
+            panic!("Expected four bytes");
+        }
+        let mut value: u32 = 0;
+        for x in input {
+            value <<= 8;
+            value += *x as u32;
+        }
+        value
+    }
+
+    pub fn slice_to_u16(input: &[u8]) -> u16 {
+        if input.len() != 2 {
+            panic!("Expected two bytes");
+        }
+        let mut value: u16 = 0;
+        for x in input {
+            value <<= 8;
+            value += *x as u16;
+        }
+        value
+    }
+
+    pub fn take_cstring_plus_fixed<'a>(input: &'a[u8], fixed: usize) -> Result<(&'a str, &'a[u8], &'a[u8])> {
+        let strlen = find_first(input, b'\0');
+        match strlen {
+            Some(strlen) => {
+                let string = from_utf8(&input[..strlen]).unwrap();
+                let fixed_data = &input[strlen+1..strlen+1+fixed];
+                let extra = &input[strlen+1+fixed..];
+                Ok((string, fixed_data, extra))
+            },
+            None => Err(PgError::Other)
+        }
+    }
+    pub fn take_sized_string<'a>(input: &'a[u8]) -> Result<(&'a str, &'a[u8])> {
+        let size = slice_to_u32(&input[..4]) as usize;
+        let data = from_utf8(&input[4..4+size]).unwrap();
+        let extra = &input[4+size..];
+        Ok((data, extra))
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct FieldDescription<'a> {
     field_name: &'a str,
     format: FieldFormat
-}
-
-fn find_first<T: Eq>(input: &[T], matched: T) -> Option<usize> {
-    let mut x = input.len();
-    for i in 0..input.len() {
-        if input[i] == matched {
-            x = i;
-            break
-        }
-    }
-    if x == input.len() {
-        None
-    } else {
-        Some(x)
-    }
-}
-
-fn take_cstring_plus_fixed<'a>(input: &'a[u8], fixed: usize) -> Result<(&'a str, &'a[u8], &'a[u8])> {
-    let strlen = find_first(input, b'\0');
-    match strlen {
-        Some(strlen) => {
-            let string = from_utf8(&input[..strlen]).unwrap();
-            let fixed = &input[strlen+1..strlen+1+fixed];
-            let extra = &input[strlen+1+fixed..];
-            Ok((string, fixed, extra))
-        },
-        None => Err(PgError::Other)
-    }
 }
 
 impl <'a> FieldDescription<'a> {
@@ -48,44 +85,17 @@ impl <'a> FieldDescription<'a> {
         take_cstring_plus_fixed(input, 18)
     }
 
-    fn from_slice(input: &[u8]) -> Result<FieldDescription> {
-        let mut input_iter = input.splitn(2, |c| c == &b'\0');
-        let field_name = from_utf8(input_iter.next().unwrap()).unwrap();
-        let remainder = input_iter.next().unwrap();
-        let format = match slice_to_u16(&remainder[16..18]) {
+    fn new(name: &'a str, fixed_data: &'a[u8]) -> Result<FieldDescription<'a>> {
+        let format = match slice_to_u16(&fixed_data[16..18]) {
             0 => FieldFormat::Text,
             1 => FieldFormat::Binary,
             _ => return Err(PgError::Other),
         };
         Ok(FieldDescription {
-            field_name: field_name,
+            field_name: name,
             format: format,
         })
     }
-}
-
-fn slice_to_u32(input: &[u8]) -> u32 {
-    if input.len() != 4 { 
-        panic!("Expected four bytes");
-    }
-    let mut value: u32 = 0;
-    for x in input {
-        value <<= 8;
-        value += *x as u32;
-    }
-    value
-}
-
-fn slice_to_u16(input: &[u8]) -> u16 {
-    if input.len() != 2 {
-        panic!("Expected two bytes");
-    }
-    let mut value: u16 = 0;
-    for x in input {
-        value <<= 8;
-        value += *x as u16;
-    }
-    value
 }
 
 #[inline]
@@ -98,10 +108,6 @@ fn _ascii_byte(input: &str) -> u8 {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct FieldData<'a> {
-    data: &'a[u8],
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ServerMsg<'a> {
@@ -113,7 +119,7 @@ pub enum ServerMsg<'a> {
     ParamStatus(&'a str, &'a str),
     BackendKeyData(u32, u32),
     RowDescription(Vec<FieldDescription<'a>>),  // TBD
-    DataRow(Vec<FieldData<'a>>),  // TBD
+    DataRow(Vec<&'a str>),  // TBD
     Unknown(&'a[u8]),  // TBD
 }
 
@@ -124,7 +130,7 @@ impl <'a> ServerMsg<'a> {
             return Err(PgError::Other)
         }
         let identifier = message.get(0).unwrap();
-        let (_, mut extra) = message.split_at(5);
+        let (_, extra) = message.split_at(5);
         if identifier == &b'R' {
             AuthMsg::from_slice(extra).map(ServerMsg::Auth)
         } else if identifier == &b'S' {  // Parameter Status
@@ -147,18 +153,37 @@ impl <'a> ServerMsg<'a> {
             let mut fields = vec![];
 
             for i in [..field_count].iter() {
-                let (fd, rem) = FieldDescription::take_field(extra).unwrap();
-                let fd = FieldDescription::from_slice(fd).unwrap();
+                let (name, bytes, rem) = FieldDescription::take_field(extra).unwrap();
+                let fd = FieldDescription::new(name, bytes).unwrap();
                 fields.push(fd);
                 extra = rem;
             }
-            Ok(ServerMsg::RowDescription(fields))  // TBD
+            if extra == &b""[..] {
+                Ok(ServerMsg::RowDescription(fields))
+            } else {
+                Err(PgError::Other)
+            }
         } else if identifier == &b'D' {  // Data Row
-            // TBD
-            Ok(ServerMsg::DataRow(vec![FieldData { data: extra }]))  // TBD
-        } else if identifier == &b'C' {  // Row Description
-            let command_tag = from_utf8(&extra).unwrap();
-            Ok(ServerMsg::CommandComplete(command_tag))
+            let field_count = slice_to_u16(&extra[..2]);
+            let mut extra = &extra[2..];
+            let mut fields = vec![];
+            for i in [..field_count].iter() {
+                let (string, more) = take_sized_string(extra).unwrap();
+                fields.push(string);
+                extra = more;
+            }
+            if extra == &b""[..] {
+                Ok(ServerMsg::DataRow(fields))  
+            } else {
+                Err(PgError::Other)
+            }
+        } else if identifier == &b'C' {  // Command Complete
+            let (command_tag, _, extra) = take_cstring_plus_fixed(extra, 0).unwrap();
+            if extra == &b""[..] {
+                Ok(ServerMsg::CommandComplete(command_tag))
+            } else {
+                Err(PgError::Other)
+            }
         } else if identifier == &b'Z' {  // ReadyForQuery
             Ok(ServerMsg::ReadyForQuery)
         } else {
@@ -331,13 +356,13 @@ mod tests {
 
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
-        assert_eq!(msg, ServerMsg::DataRow(vec![FieldData { data: b"PostgreSQL 9.6.1 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 6.2.1 20160830, 64-bit" }]));
+        assert_eq!(msg, ServerMsg::DataRow(vec!["PostgreSQL 9.6.1 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 6.2.1 20160830, 64-bit"]));
         assert_eq!(buffer.len(), 20);
 
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
         assert_eq!(msg, ServerMsg::CommandComplete("SELECT 1"));
-        assert_eq!(buffer.len(), 0);
+        assert_eq!(buffer.len(), 6);
 
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();

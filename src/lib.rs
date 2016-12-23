@@ -10,6 +10,7 @@ pub mod error {
     use std::fmt;
     use std::io;
     use std::net;
+    use std::str::Utf8Error;
     use std::error::Error;
 
     #[derive(Debug)]
@@ -17,6 +18,7 @@ pub mod error {
         Other,
         Io(io::Error),
         IP(net::AddrParseError),
+        Utf8(Utf8Error),
     }
 
     impl fmt::Display for PgError {
@@ -24,6 +26,7 @@ pub mod error {
             match *self {
                 PgError::Io(ref err) => err.fmt(f),
                 PgError::IP(ref err) => err.fmt(f),
+                PgError::Utf8(ref err) => err.fmt(f),
                 PgError::Other => write!(f, "Unknown error"),
             }
         }
@@ -34,6 +37,7 @@ pub mod error {
             match *self {
                 PgError::Io(ref err) => err.description(),
                 PgError::IP(ref err) => err.description(),
+                PgError::Utf8(ref err) => err.description(),
                 PgError::Other => "An error occurred",
             }
         }
@@ -42,6 +46,7 @@ pub mod error {
             match *self {
                 PgError::Io(ref err) => Some(err),
                 PgError::IP(ref err) => Some(err),
+                PgError::Utf8(ref err) => Some(err),
                 PgError::Other => None,
             }
         }
