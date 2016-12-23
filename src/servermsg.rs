@@ -120,7 +120,7 @@ pub enum ServerMsg<'a> {
     BackendKeyData(u32, u32),
     RowDescription(Vec<FieldDescription<'a>>),  // TBD
     DataRow(Vec<&'a str>),  // TBD
-    Unknown(&'a u8, &'a[u8]),  // TBD
+    Unknown(&'a str, &'a[u8]),  // TBD
 }
 
 impl <'a> ServerMsg<'a> {
@@ -129,11 +129,11 @@ impl <'a> ServerMsg<'a> {
         if message.len() != length {
             return Err(PgError::Error(format!("Wrong length for message.  Expected {}.  Found {}.", length, message.len())))
         }
-        let identifier = message.get(0).unwrap();
+        let identifier = from_utf8(&message[..1]).unwrap();
         let (_, extra) = message.split_at(5);
-        if identifier == &b'R' {
+        if identifier == "R" {
             AuthMsg::from_slice(extra).map(ServerMsg::Auth)
-        } else if identifier == &b'S' {  // Parameter Status
+        } else if identifier == "S" {  // Parameter Status
             let mut param_iter = extra.split(|c| c == &0); // split on nulls
             let name = from_utf8(param_iter.next().unwrap()).unwrap();
             let value = from_utf8(param_iter.next().unwrap()).unwrap();
@@ -143,16 +143,16 @@ impl <'a> ServerMsg<'a> {
             } else {
                 Ok(ServerMsg::ParamStatus(name, value))
             }
-        } else if identifier == &b'K' {  // BackendKeyData
+        } else if identifier == "K" {  // BackendKeyData
             let pid = slice_to_u32(&extra[..4]);
             let key = slice_to_u32(&extra[4..]);
             Ok(ServerMsg::BackendKeyData(pid, key))
-        } else if identifier == &b'T' {  // Row Description
+        } else if identifier == "T" {  // Row Description
             let field_count = slice_to_u16(&extra[..2]);
             let mut extra = &extra[2..];
             let mut fields = vec![];
 
-            for i in [..field_count].iter() {
+            for _ in [..field_count].iter() {
                 let (name, bytes, rem) = FieldDescription::take_field(extra).unwrap();
                 let fd = FieldDescription::new(name, bytes).unwrap();
                 fields.push(fd);
@@ -163,11 +163,11 @@ impl <'a> ServerMsg<'a> {
             } else {
                 Err(PgError::Error(format!("Unexpected extra data in row description: {:?}", extra)))
             }
-        } else if identifier == &b'D' {  // Data Row
+        } else if identifier == "D" {  // Data Row
             let field_count = slice_to_u16(&extra[..2]);
             let mut extra = &extra[2..];
             let mut fields = vec![];
-            for i in [..field_count].iter() {
+            for _ in [..field_count].iter() {
                 let (string, more) = take_sized_string(extra).unwrap();
                 fields.push(string);
                 extra = more;
@@ -177,14 +177,14 @@ impl <'a> ServerMsg<'a> {
             } else {
                 Err(PgError::Error(format!("Unexpected extra data in data row: {:?}", extra)))
             }
-        } else if identifier == &b'C' {  // Command Complete
+        } else if identifier == "C" {  // Command Complete
             let (command_tag, _, extra) = take_cstring_plus_fixed(extra, 0).unwrap();
             if extra == &b""[..] {
                 Ok(ServerMsg::CommandComplete(command_tag))
             } else {
                 Err(PgError::Error(format!("Unexpected extra data in command complate: {:?}", extra)))
             }
-        } else if identifier == &b'Z' {  // ReadyForQuery
+        } else if identifier == "Z" {  // ReadyForQuery
             Ok(ServerMsg::ReadyForQuery)
         } else {
             Ok(ServerMsg::Unknown(identifier, extra))

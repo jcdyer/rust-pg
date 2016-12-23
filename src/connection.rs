@@ -12,6 +12,7 @@ pub struct Connection {
     host: String,
     port: u16,
     socket: net::TcpStream,
+    ready_for_query: bool,
 }
 
 impl Connection {
@@ -38,6 +39,7 @@ impl Connection {
         let mut conn: Option<Result<Connection>> = None;
         let mut remainder = &buf[..];
         let mut authorized = false;
+        let mut ready_for_query = false;
         while remainder.len() > 0 {
             println!("Authorized? {:?}", authorized);
             let (bytes, excess) = try!(take_msg(remainder));
@@ -55,21 +57,60 @@ impl Connection {
                     println!("Unimplemented authentication method, {:?}", method);
                     return Err(PgError::Other);
                 },
-                ServerMsg::ReadyForQuery => break,
+                ServerMsg::ReadyForQuery => ready_for_query = true,
                 _ => {},
             };
         }
         if authorized == true {
             Ok(Connection { 
-                user: user.clone(),
-                database: database.clone(),
-                host: host.clone(),
+                user: user,
+                database: database,
+                host: host,
                 port: port,
                 socket: socket,
+                ready_for_query: ready_for_query,
             })
         } else {
             Err(PgError::Unauthenticated)
         }
+    }
+
+    pub fn query(&mut self, sql: &str) -> Result<Vec<Vec<String>>> {
+        let query = Query { query: sql.to_string() };
+        self.socket.write_all(&query.to_bytes());
+        self.ready_for_query = false;
+        let mut buf: Vec<u8> = vec!();
+        self.socket.read_to_end(&mut buf);
+        let mut remainder = &buf[..];
+        let mut data = vec![];
+        let mut complete = None;
+            
+        while remainder.len() > 0 {
+            let (bytes, excess) = try!(take_msg(remainder));
+            let msg = try!(ServerMsg::from_slice(bytes));
+            remainder = excess;
+            match msg {
+                ServerMsg::DataRow(vec) => {
+                    let mut row = vec![];
+                    println!("DataRow: {:?}", vec);
+                    for each in vec {
+                        row.push(each.to_string());
+                    }
+                    data.push(row)
+                },
+                ServerMsg::CommandComplete(command_tag) => complete = Some(command_tag),
+                ServerMsg::ReadyForQuery => {
+                    if remainder.len() > 0 {
+                        return Err(PgError::Error(
+                            format!("Received data after ReadyForQuery: {:?}", remainder)
+                        ));
+                    };
+                    self.ready_for_query = true;
+                },
+                _ => {}
+            }
+        }
+        Ok(data)
     }
 
     /*
@@ -86,12 +127,18 @@ mod tests {
 
     #[test]
     fn test_connect() {
-        let url = "postgres://test.url";
         let user = "cliff";
         let host = "localhost";
         let database = Some("db");
         let conn = Connection::new(user, host, database);
         println!("{:?}", conn);
         assert!(conn.is_ok());
+    }
+
+    #[test]
+    fn test_query() {
+        let mut conn = Connection::new("cliff", "localhost", Some("cliff")).unwrap();
+        let data = conn.query("SELECT VERSION()").unwrap();
+        assert_eq!(data.len(), 5);
     }
 }
