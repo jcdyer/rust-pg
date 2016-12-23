@@ -1,7 +1,9 @@
 use std::io::{Read, Write};
 use std::net;
-use super::Result;
-use super::message::{Message, StartupMessage, Query, Terminate};
+use Result;
+use error::PgError;
+use message::{Message, StartupMessage, Query, Terminate};
+use servermsg::{take_msg, ServerMsg, AuthMsg};
 
 #[derive(Debug)]
 pub struct Connection {
@@ -33,15 +35,43 @@ impl Connection {
         socket.write_all(&startup.to_bytes()).unwrap();
         socket.read_to_end(&mut buf).unwrap();
         println!("{:?}", buf);
+        let mut conn: Option<Result<Connection>> = None;
+        let mut remainder = &buf[..];
+        let mut authorized = false;
+        while remainder.len() > 0 {
+            println!("Authorized? {:?}", authorized);
+            let (bytes, excess) = try!(take_msg(remainder));
+            println!("B: {:?}, E: {:?}", bytes, excess);
+            let msg = try!(ServerMsg::from_slice(bytes));
+            println!("{:?}", msg);
+            remainder = excess;
 
-        Ok(Connection { 
-            user: user,
-            database: database,
-            host: host,
-            port: port,
-            socket: socket,
-        })
+            match msg {
+                ServerMsg::Auth(AuthMsg::Ok) => {
+                    println!("Authorized");
+                    authorized = true;
+                },
+                ServerMsg::Auth(method) => {
+                    println!("Unimplemented authentication method, {:?}", method);
+                    return Err(PgError::Other);
+                },
+                ServerMsg::ReadyForQuery => break,
+                _ => {},
+            };
+        }
+        if authorized == true {
+            Ok(Connection { 
+                user: user.clone(),
+                database: database.clone(),
+                host: host.clone(),
+                port: port,
+                socket: socket,
+            })
+        } else {
+            Err(PgError::Unauthenticated)
+        }
     }
+
     /*
     pub fn close(self) -> Result<()> {
         self.socket.write_all(&Terminate.to_bytes()).unwrap();
@@ -61,6 +91,7 @@ mod tests {
         let host = "localhost";
         let database = Some("db");
         let conn = Connection::new(user, host, database);
+        println!("{:?}", conn);
         assert!(conn.is_ok());
     }
 }

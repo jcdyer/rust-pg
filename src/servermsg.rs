@@ -31,7 +31,7 @@ mod erg {
     }
 
     pub fn slice_to_u32(input: &[u8]) -> u32 {
-        if input.len() != 4 { 
+        if input.len() != 4 {
             panic!("Expected four bytes");
         }
         let mut value: u32 = 0;
@@ -63,7 +63,7 @@ mod erg {
                 let extra = &input[strlen+1+fixed..];
                 Ok((string, fixed_data, extra))
             },
-            None => Err(PgError::Other)
+            None => Err(PgError::Error("null byte not found".to_string()))
         }
     }
     pub fn take_sized_string<'a>(input: &'a[u8]) -> Result<(&'a str, &'a[u8])> {
@@ -89,7 +89,7 @@ impl <'a> FieldDescription<'a> {
         let format = match slice_to_u16(&fixed_data[16..18]) {
             0 => FieldFormat::Text,
             1 => FieldFormat::Binary,
-            _ => return Err(PgError::Other),
+            _ => return Err(PgError::Error("Invalid field format".to_string())),
         };
         Ok(FieldDescription {
             field_name: name,
@@ -120,14 +120,14 @@ pub enum ServerMsg<'a> {
     BackendKeyData(u32, u32),
     RowDescription(Vec<FieldDescription<'a>>),  // TBD
     DataRow(Vec<&'a str>),  // TBD
-    Unknown(&'a[u8]),  // TBD
+    Unknown(&'a u8, &'a[u8]),  // TBD
 }
 
 impl <'a> ServerMsg<'a> {
     pub fn from_slice(message: &[u8]) -> Result<ServerMsg> {
         let length = 1 + slice_to_u32(&message[1 .. 5]) as usize;
         if message.len() != length {
-            return Err(PgError::Other)
+            return Err(PgError::Error(format!("Wrong length for message.  Expected {}.  Found {}.", length, message.len())))
         }
         let identifier = message.get(0).unwrap();
         let (_, extra) = message.split_at(5);
@@ -139,14 +139,14 @@ impl <'a> ServerMsg<'a> {
             let value = from_utf8(param_iter.next().unwrap()).unwrap();
             let nothing = param_iter.next().unwrap(); // The second null is the terminator
             if nothing != [] {
-                Err(PgError::Other)
+                Err(PgError::Error(format!("Extra value after param status: {:?}", nothing)))
             } else {
                 Ok(ServerMsg::ParamStatus(name, value))
             }
         } else if identifier == &b'K' {  // BackendKeyData
             let pid = slice_to_u32(&extra[..4]);
             let key = slice_to_u32(&extra[4..]);
-            Ok(ServerMsg::BackendKeyData(pid, key))  
+            Ok(ServerMsg::BackendKeyData(pid, key))
         } else if identifier == &b'T' {  // Row Description
             let field_count = slice_to_u16(&extra[..2]);
             let mut extra = &extra[2..];
@@ -161,7 +161,7 @@ impl <'a> ServerMsg<'a> {
             if extra == &b""[..] {
                 Ok(ServerMsg::RowDescription(fields))
             } else {
-                Err(PgError::Other)
+                Err(PgError::Error(format!("Unexpected extra data in row description: {:?}", extra)))
             }
         } else if identifier == &b'D' {  // Data Row
             let field_count = slice_to_u16(&extra[..2]);
@@ -173,21 +173,21 @@ impl <'a> ServerMsg<'a> {
                 extra = more;
             }
             if extra == &b""[..] {
-                Ok(ServerMsg::DataRow(fields))  
+                Ok(ServerMsg::DataRow(fields))
             } else {
-                Err(PgError::Other)
+                Err(PgError::Error(format!("Unexpected extra data in data row: {:?}", extra)))
             }
         } else if identifier == &b'C' {  // Command Complete
             let (command_tag, _, extra) = take_cstring_plus_fixed(extra, 0).unwrap();
             if extra == &b""[..] {
                 Ok(ServerMsg::CommandComplete(command_tag))
             } else {
-                Err(PgError::Other)
+                Err(PgError::Error(format!("Unexpected extra data in command complate: {:?}", extra)))
             }
         } else if identifier == &b'Z' {  // ReadyForQuery
             Ok(ServerMsg::ReadyForQuery)
         } else {
-            Err(PgError::Other)
+            Ok(ServerMsg::Unknown(identifier, extra))
         }
     }
 }
@@ -232,11 +232,11 @@ impl <'a> AuthMsg<'a> {
 
 pub fn take_msg(input: &[u8]) -> Result<(&[u8], &[u8])> {
     if input.len() < 5 {
-        Err(PgError::Other)
+        Err(PgError::Error(format!("Input too short: {:?}", input)))
     } else {
         let length = 1 + slice_to_u32(&input[1 .. 5]) as usize;
         if input.len() < length {
-            Err(PgError::Other)
+            Err(PgError::Error(format!("Message too short: {:?}", input)))
         } else {
             Ok(input.split_at(length))
         }
@@ -264,6 +264,7 @@ mod tests {
         let msg = ServerMsg::from_slice(next).unwrap();
         assert_eq!(msg, ServerMsg::Auth(AuthMsg::Ok));
         assert_eq!(buffer.len(), 314);
+
         let (next, buffer) = take_msg(buffer).unwrap();
         let msg = ServerMsg::from_slice(next).unwrap();
         assert_eq!(msg, ServerMsg::ParamStatus("application_name", ""));
@@ -346,7 +347,7 @@ mod tests {
         assert_eq!(
             msg,
             ServerMsg::RowDescription(
-                vec![FieldDescription { 
+                vec![FieldDescription {
                     field_name: "version",
                     format: FieldFormat::Text,
                 }]

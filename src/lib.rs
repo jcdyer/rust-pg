@@ -15,10 +15,12 @@ pub mod error {
 
     #[derive(Debug)]
     pub enum PgError {
-        Other,
         Io(io::Error),
         IP(net::AddrParseError),
         Utf8(Utf8Error),
+        Error(String),
+        Unauthenticated,
+        Other,
     }
 
     impl fmt::Display for PgError {
@@ -27,7 +29,9 @@ pub mod error {
                 PgError::Io(ref err) => err.fmt(f),
                 PgError::IP(ref err) => err.fmt(f),
                 PgError::Utf8(ref err) => err.fmt(f),
-                PgError::Other => write!(f, "Unknown error"),
+                PgError::Error(ref string) => write!(f, "Error: {:?}", string),
+                PgError::Unauthenticated => write!(f, "Unauthenticated"),
+                PgError::Other => write!(f, "An unknown error occured"),
             }
         }
     }
@@ -38,6 +42,8 @@ pub mod error {
                 PgError::Io(ref err) => err.description(),
                 PgError::IP(ref err) => err.description(),
                 PgError::Utf8(ref err) => err.description(),
+                PgError::Error(ref string) => string,
+                PgError::Unauthenticated => "Unauthenticated",
                 PgError::Other => "An error occurred",
             }
         }
@@ -47,6 +53,8 @@ pub mod error {
                 PgError::Io(ref err) => Some(err),
                 PgError::IP(ref err) => Some(err),
                 PgError::Utf8(ref err) => Some(err),
+                PgError::Error(..) => None,
+                PgError::Unauthenticated => None,
                 PgError::Other => None,
             }
         }
@@ -54,6 +62,3 @@ pub mod error {
 }
 
 pub type Result<T> = result::Result<T, error::PgError>;
-
-
-
