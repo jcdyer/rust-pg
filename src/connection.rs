@@ -77,10 +77,10 @@ impl Connection {
 
     pub fn query(&mut self, sql: &str) -> Result<Vec<Vec<String>>> {
         let query = Query { query: sql.to_string() };
-        self.socket.write_all(&query.to_bytes());
+        self.socket.write_all(&query.to_bytes()).unwrap();
         self.ready_for_query = false;
         let mut buf: Vec<u8> = vec!();
-        self.socket.read_to_end(&mut buf);
+        self.socket.read_to_end(&mut buf).unwrap();
         let mut remainder = &buf[..];
         let mut data = vec![];
         let mut complete = None;
