@@ -135,7 +135,6 @@ mod tests {
         println!("{:?}", user);
         let host = "127.0.0.1";
         let database = Some(user);
-        let database = Some("cliff");
         let conn = Connection::new(user, host, database);
         println!("{:?}", conn);
         assert!(conn.is_ok());

@@ -111,8 +111,8 @@ fn _ascii_byte(input: &str) -> u8 {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ServerMsg<'a> {
-    Error(&'a[u8]),
-    Notification(&'a[u8]),
+    ErrorResponse(Vec<&'a str>),
+    NoticeResponse(&'a[u8]),
     Auth(AuthMsg<'a>),
     ReadyForQuery,
     CommandComplete(&'a str),
@@ -131,63 +131,92 @@ impl <'a> ServerMsg<'a> {
         }
         let identifier = from_utf8(&message[..1]).unwrap();
         let (_, extra) = message.split_at(5);
-        if identifier == "R" {
-            AuthMsg::from_slice(extra).map(ServerMsg::Auth)
-        } else if identifier == "S" {  // Parameter Status
-            let mut param_iter = extra.split(|c| c == &0); // split on nulls
-            let name = from_utf8(param_iter.next().unwrap()).unwrap();
-            let value = from_utf8(param_iter.next().unwrap()).unwrap();
-            let nothing = param_iter.next().unwrap(); // The second null is the terminator
-            if nothing != [] {
-                Err(PgError::Error(format!("Extra value after param status: {:?}", nothing)))
-            } else {
-                Ok(ServerMsg::ParamStatus(name, value))
-            }
-        } else if identifier == "K" {  // BackendKeyData
-            let pid = slice_to_u32(&extra[..4]);
-            let key = slice_to_u32(&extra[4..]);
-            Ok(ServerMsg::BackendKeyData(pid, key))
-        } else if identifier == "T" {  // Row Description
-            let field_count = slice_to_u16(&extra[..2]);
-            let mut extra = &extra[2..];
-            let mut fields = vec![];
+        match identifier {
+            "R" => {
+                AuthMsg::from_slice(extra).map(ServerMsg::Auth)
+            },
+            "S" => {  // Parameter Status
+                let mut param_iter = extra.split(|c| c == &0); // split on nulls
+                let name = from_utf8(param_iter.next().unwrap()).unwrap();
+                let value = from_utf8(param_iter.next().unwrap()).unwrap();
+                let nothing = param_iter.next().unwrap(); // The second null is the terminator
+                if nothing != [] {
+                    Err(PgError::Error(format!("Extra value after param status: {:?}", nothing)))
+                } else {
+                    Ok(ServerMsg::ParamStatus(name, value))
+                }
+            },
+            "K" => {  // BackendKeyData
+                let pid = slice_to_u32(&extra[..4]);
+                let key = slice_to_u32(&extra[4..]);
+                Ok(ServerMsg::BackendKeyData(pid, key))
+            },
+            "T" => {  // Row Description
+                let field_count = slice_to_u16(&extra[..2]);
+                let mut extra = &extra[2..];
+                let mut fields = vec![];
 
-            for _ in [..field_count].iter() {
-                let (name, bytes, rem) = FieldDescription::take_field(extra).unwrap();
-                let fd = FieldDescription::new(name, bytes).unwrap();
-                fields.push(fd);
-                extra = rem;
-            }
-            if extra == &b""[..] {
-                Ok(ServerMsg::RowDescription(fields))
-            } else {
-                Err(PgError::Error(format!("Unexpected extra data in row description: {:?}", extra)))
-            }
-        } else if identifier == "D" {  // Data Row
-            let field_count = slice_to_u16(&extra[..2]);
-            let mut extra = &extra[2..];
-            let mut fields = vec![];
-            for _ in [..field_count].iter() {
-                let (string, more) = take_sized_string(extra).unwrap();
-                fields.push(string);
-                extra = more;
-            }
-            if extra == &b""[..] {
-                Ok(ServerMsg::DataRow(fields))
-            } else {
-                Err(PgError::Error(format!("Unexpected extra data in data row: {:?}", extra)))
-            }
-        } else if identifier == "C" {  // Command Complete
-            let (command_tag, _, extra) = take_cstring_plus_fixed(extra, 0).unwrap();
-            if extra == &b""[..] {
-                Ok(ServerMsg::CommandComplete(command_tag))
-            } else {
-                Err(PgError::Error(format!("Unexpected extra data in command complate: {:?}", extra)))
-            }
-        } else if identifier == "Z" {  // ReadyForQuery
-            Ok(ServerMsg::ReadyForQuery)
-        } else {
-            Ok(ServerMsg::Unknown(identifier, extra))
+                for _ in [..field_count].iter() {
+                    let (name, bytes, rem) = FieldDescription::take_field(extra).unwrap();
+                    let fd = FieldDescription::new(name, bytes).unwrap();
+                    fields.push(fd);
+                    extra = rem;
+                }
+                if extra == &b""[..] {
+                    Ok(ServerMsg::RowDescription(fields))
+                } else {
+                    Err(PgError::Error(format!("Unexpected extra data in row description: {:?}", extra)))
+                }
+            },
+            "D" => {  // Data Row
+                let field_count = slice_to_u16(&extra[..2]);
+                let mut extra = &extra[2..];
+                let mut fields = vec![];
+                for _ in [..field_count].iter() {
+                    let (string, more) = take_sized_string(extra).unwrap();
+                    fields.push(string);
+                    extra = more;
+                }
+                if extra == &b""[..] {
+                    Ok(ServerMsg::DataRow(fields))
+                } else {
+                    Err(PgError::Error(format!("Unexpected extra data in data row: {:?}", extra)))
+                }
+            },
+            "C" => {  // Command Complete
+                let (command_tag, _, extra) = take_cstring_plus_fixed(extra, 0).unwrap();
+                if extra == &b""[..] {
+                    Ok(ServerMsg::CommandComplete(command_tag))
+                } else {
+                    Err(PgError::Error(format!("Unexpected extra data in command complate: {:?}", extra)))
+                }
+            },
+            "Z" => {  // ReadyForQuery
+                Ok(ServerMsg::ReadyForQuery)
+            },
+            "N" => { // NoticeResponse
+                Ok(ServerMsg::NoticeResponse(extra))
+            },
+            "E" => { // ErrorResponse
+                let mut errors = Vec::new();
+                let mut remainder = extra;
+                if let None = remainder.get(0) {
+                    Err(PgError::Error(format!("No terminator in {:?}", extra)))
+                } else {
+                    while remainder.get(0) != Some(&0) {
+	                let (msg, _, end) = take_cstring_plus_fixed(&remainder[1..], 0).unwrap();
+                        errors.push(msg);
+                        remainder = end;
+                        if let None = remainder.get(0) {
+                            return Err(PgError::Error(format!("No terminator in {:?}", extra)))
+                        }
+                    }
+                    Ok(ServerMsg::ErrorResponse(errors))
+                }
+            },
+            _ => {
+                Ok(ServerMsg::Unknown(identifier, extra))
+            },
         }
     }
 }
