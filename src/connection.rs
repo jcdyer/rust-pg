@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let mut conn = Connection::new("cliff", "127.0.0.1", Some("cliff")).unwrap();
+        let mut conn = Connection::new("ubuntu", "127.0.0.1", Some("cliff")).unwrap();
         let data = conn.query("SELECT VERSION()").unwrap();
         assert_eq!(data.len(), 5);
     }
