@@ -4,6 +4,7 @@ Demo postgres connector
 
 from __future__ import print_function, unicode_literals
 
+import os
 import socket
 import struct
 from contextlib import closing
@@ -38,7 +39,14 @@ def send_startup_message(sock):
     Send a startup message
     """
     #                 proto_version params                                                terminator
-    startup_message = b'\0\x03\0\0' b'database\0' b'cliff\0' b'user\0' b'cliff\0' b'\0'
+    user = os.environ['USER']
+    db = user
+    startup_message = (
+        b'\0\x03\0\0' +
+        b'user\0'  + user.encode('ascii') + b'\0' +
+        b'database\0' + db.encode('ascii') + b'\0' +
+        b'\0' 
+    )
     startup_message = create_message(None, startup_message)
     print(repr(startup_message))
     sock.sendall(startup_message)
@@ -83,8 +91,8 @@ def main():
     """
     Connect to postgres server.
     """
-    with closing(socket.socket(socket.AF_UNIX)) as sock:
-        sock.connect(unix_socket)
+    with closing(socket.socket(socket.AF_INET)) as sock:
+        sock.connect(('localhost', 5432))
         response = send_startup_message(sock)
         print("Startup response")
         print(response)
