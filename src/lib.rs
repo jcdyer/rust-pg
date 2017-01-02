@@ -59,6 +59,13 @@ pub mod error {
             }
         }
     }
+
+    impl From<io::Error> for PgError {
+        fn from(err: io::Error) -> PgError {
+            PgError::Io(err)
+        }
+    }
+
 }
 
 pub type Result<T> = result::Result<T, error::PgError>;

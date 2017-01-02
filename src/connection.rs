@@ -25,8 +25,8 @@ impl Connection {
         let user = user.to_string();
         let host = host.to_string();
         let port = 5432u16;
-        let mut socket = net::TcpStream::connect((host.as_str(), port)).unwrap();
-        socket.set_read_timeout(Some(Duration::new(10, 0)));
+        let mut socket = try!(net::TcpStream::connect((host.as_str(), port)));
+        socket.set_read_timeout(Some(Duration::new(2, 0)));
 
         let mut buf: Vec<u8> = Vec::with_capacity(1024);
         let startup = StartupMessage {
@@ -35,8 +35,8 @@ impl Connection {
             params: vec!(),
         };
 
-        socket.write_all(&startup.to_bytes()).unwrap();
-        socket.read_to_end(&mut buf).unwrap();
+        try!(socket.write_all(&startup.to_bytes()));
+        try!(socket.read_to_end(&mut buf));
         println!("{:?}", buf);
         let mut remainder = &buf[..];
         let mut authorized = false;
@@ -78,10 +78,10 @@ impl Connection {
 
     pub fn query(&mut self, sql: &str) -> Result<Vec<Vec<String>>> {
         let query = Query { query: sql.to_string() };
-        self.socket.write_all(&query.to_bytes()).unwrap();
+        try!(self.socket.write_all(&query.to_bytes()));
         self.ready_for_query = false;
         let mut buf: Vec<u8> = vec!();
-        self.socket.read_to_end(&mut buf).unwrap();
+        try!(self.socket.read_to_end(&mut buf));
         let mut remainder = &buf[..];
         let mut data = vec![];
         let mut complete = None;
@@ -131,7 +131,7 @@ mod tests {
     fn test_connect() {
         let user_string = env::var("USER").unwrap();
         let user = user_string.as_ref();
-        let host = "localhost";
+        let host = "127.0.0.1";
         let database = Some(user);
         let conn = Connection::new(user, host, database);
         println!("{:?}", conn);
