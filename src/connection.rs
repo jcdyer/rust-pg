@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::net;
+use std::time::Duration;
 use Result;
 use error::PgError;
 use message::{Message, StartupMessage, Query, Terminate};
@@ -25,8 +26,9 @@ impl Connection {
         let host = host.to_string();
         let port = 5432u16;
         let mut socket = net::TcpStream::connect((host.as_str(), port)).unwrap();
+        socket.set_read_timeout(Some(Duration::new(10, 0)));
 
-        let mut buf: Vec<u8> = vec!();
+        let mut buf: Vec<u8> = Vec::with_capacity(1024);
         let startup = StartupMessage {
             user: user.clone(),
             database: Some(database.clone()),
@@ -36,7 +38,6 @@ impl Connection {
         socket.write_all(&startup.to_bytes()).unwrap();
         socket.read_to_end(&mut buf).unwrap();
         println!("{:?}", buf);
-        let mut conn: Option<Result<Connection>> = None;
         let mut remainder = &buf[..];
         let mut authorized = false;
         let mut ready_for_query = false;
@@ -123,13 +124,15 @@ impl Connection {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use super::Connection;
 
     #[test]
     fn test_connect() {
-        let user = "cliff";
+        let user_string = env::var("USER").unwrap();
+        let user = user_string.as_ref();
         let host = "localhost";
-        let database = Some("db");
+        let database = Some(user);
         let conn = Connection::new(user, host, database);
         println!("{:?}", conn);
         assert!(conn.is_ok());
