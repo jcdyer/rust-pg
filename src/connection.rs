@@ -30,12 +30,13 @@ impl Connection {
 
         let mut buf: Vec<u8> = Vec::with_capacity(1024);
         let startup = StartupMessage {
-            user: user.clone(),
-            database: Some(database.clone()),
+            user: &user,
+            database: Some(&database),
             params: vec!(),
         };
-
+        println!("Startup Message: {:?}", startup.to_bytes());
         try!(socket.write_all(&startup.to_bytes()));
+        try!(socket.flush());
         try!(socket.read_to_end(&mut buf));
         println!("{:?}", buf);
         let mut remainder = &buf[..];
@@ -64,8 +65,8 @@ impl Connection {
         }
         if authorized == true {
             Ok(Connection { 
-                user: user,
-                database: database,
+                user: user.clone(),
+                database: database.clone(),
                 host: host,
                 port: port,
                 socket: socket,
@@ -131,8 +132,10 @@ mod tests {
     fn test_connect() {
         let user_string = env::var("USER").unwrap();
         let user = user_string.as_ref();
+        println!("{:?}", user);
         let host = "127.0.0.1";
         let database = Some(user);
+        let database = Some("cliff");
         let conn = Connection::new(user, host, database);
         println!("{:?}", conn);
         assert!(conn.is_ok());
@@ -140,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let mut conn = Connection::new("cliff", "localhost", Some("cliff")).unwrap();
+        let mut conn = Connection::new("cliff", "127.0.0.1", Some("cliff")).unwrap();
         let data = conn.query("SELECT VERSION()").unwrap();
         assert_eq!(data.len(), 5);
     }

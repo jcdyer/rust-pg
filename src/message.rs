@@ -29,13 +29,13 @@ enum TransactionStatus {
 // Message types
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct StartupMessage {
-    pub user: String,
-    pub database: Option<String>,
+pub struct StartupMessage<'a> {
+    pub user: &'a str,
+    pub database: Option<&'a str>,
     pub params: Vec<(String, String)>,
 }
 
-impl Message for StartupMessage {
+impl <'a> Message for StartupMessage<'a> {
     fn get_id(&self) -> Option<u8> {
         None
     }
@@ -94,13 +94,12 @@ mod tests {
             Terminate.to_bytes(),
             b"\x58\0\0\0\x04"
         );
-            // [0x58, 0, 0, 0, 4]
     }
 
     #[test]
     fn test_startup_message() {
         let msg = StartupMessage {
-            user: "cliff".to_string(),
+            user: "cliff",
             database: None,
             params: vec![
                 ("name".to_string(), "Theseus".to_string()), 
