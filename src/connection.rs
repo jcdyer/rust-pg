@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::net;
+use std::thread::sleep;
 use std::time::Duration;
 use Result;
 use error::PgError;
@@ -26,9 +27,9 @@ impl Connection {
         let host = host.to_string();
         let port = 5432u16;
         let mut socket = try!(net::TcpStream::connect((host.as_str(), port)));
-        socket.set_read_timeout(Some(Duration::new(2, 0)));
+        try!(socket.set_read_timeout(Some(Duration::new(2, 0))));
+        try!(socket.set_nodelay(true));
 
-        let mut buf: Vec<u8> = Vec::with_capacity(1024);
         let startup = StartupMessage {
             user: &user,
             database: Some(&database),
@@ -36,9 +37,9 @@ impl Connection {
         };
         println!("Startup Message: {:?}", startup.to_bytes());
         try!(socket.write_all(&startup.to_bytes()));
-        try!(socket.flush());
+        let mut buf: Vec<u8> = Vec::with_capacity(1024);
         try!(socket.read_to_end(&mut buf));
-        println!("{:?}", buf);
+        println!("msg read {:?}", buf);
         let mut remainder = &buf[..];
         let mut authorized = false;
         let mut ready_for_query = false;
@@ -58,6 +59,10 @@ impl Connection {
                 ServerMsg::Auth(method) => {
                     println!("Unimplemented authentication method, {:?}", method);
                     return Err(PgError::Other);
+                },
+                ServerMsg::ErrorResponse(err) => {
+                    let message = err.get(3).unwrap();
+                    return Err(PgError::Error(message.to_string()));
                 },
                 ServerMsg::ReadyForQuery => ready_for_query = true,
                 _ => {},
@@ -132,17 +137,19 @@ mod tests {
     fn test_connect() {
         let user_string = env::var("USER").unwrap();
         let user = user_string.as_ref();
-        println!("{:?}", user);
+        println!("User: {:?}", user);
         let host = "127.0.0.1";
         let database = Some(user);
         let conn = Connection::new(user, host, database);
-        println!("{:?}", conn);
+        println!("Connection: {:?}", conn);
         assert!(conn.is_ok());
     }
 
     #[test]
     fn test_query() {
-        let mut conn = Connection::new("ubuntu", "127.0.0.1", Some("cliff")).unwrap();
+        let user_string = env::var("USER").unwrap();
+        let user = user_string.as_ref();
+        let mut conn = Connection::new(user, "127.0.0.1", Some(user)).expect("Could not establish connection");
         let data = conn.query("SELECT VERSION()").unwrap();
         assert_eq!(data.len(), 5);
     }
