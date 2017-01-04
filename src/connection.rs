@@ -25,9 +25,9 @@ impl Connection {
         };
         let user = user.to_string();
         let host = host.to_string();
-        let port = 5432u16;
+        let port = 5432;
         let mut socket = try!(net::TcpStream::connect((host.as_str(), port)));
-        try!(socket.set_read_timeout(Some(Duration::new(2, 0))));
+        try!(socket.set_read_timeout(Some(Duration::new(0, 1))));
         try!(socket.set_nodelay(true));
 
         let startup = StartupMessage {
@@ -35,11 +35,13 @@ impl Connection {
             database: Some(&database),
             params: vec!(),
         };
-        println!("Startup Message: {:?}", startup.to_bytes());
-        try!(socket.write_all(&startup.to_bytes()));
-        let mut buf: Vec<u8> = Vec::with_capacity(1024);
-        try!(socket.read_to_end(&mut buf));
-        println!("msg read {:?}", buf);
+        let bytes_to_send = startup.to_bytes();
+        println!("Startup Message: {:?}", bytes_to_send);
+        let mut x = try!(socket.write_all(&bytes_to_send)); 
+        let mut buf = Vec::with_capacity(1024);
+        let mut z = 5;
+        let x = socket.read_to_end(&mut buf);
+        println!("msg read {:?}", &buf[..]);
         let mut remainder = &buf[..];
         let mut authorized = false;
         let mut ready_for_query = false;
@@ -48,7 +50,7 @@ impl Connection {
             let (bytes, excess) = try!(take_msg(remainder));
             println!("B: {:?}, E: {:?}", bytes, excess);
             let msg = try!(ServerMsg::from_slice(bytes));
-            println!("{:?}", msg);
+            println!("Message: {:?}", msg);
             remainder = excess;
 
             match msg {
@@ -84,10 +86,20 @@ impl Connection {
 
     pub fn query(&mut self, sql: &str) -> Result<Vec<Vec<String>>> {
         let query = Query { query: sql.to_string() };
+        println!("Sending query {:?}", query.to_bytes());
         try!(self.socket.write_all(&query.to_bytes()));
         self.ready_for_query = false;
         let mut buf: Vec<u8> = vec!();
-        try!(self.socket.read_to_end(&mut buf));
+        while buf.len() == 0 {
+            match self.socket.read_to_end(&mut buf) {
+                Ok(_) => break,
+                Err(ioerr) => if let Some(11) = ioerr.raw_os_error() {
+                    continue;
+                } else {
+                    try!(Err(ioerr));
+                }
+            }
+        }
         let mut remainder = &buf[..];
         let mut data = vec![];
         let mut complete = None;
@@ -103,9 +115,11 @@ impl Connection {
                     for each in vec {
                         row.push(each.to_string());
                     }
-                    data.push(row)
+                    data.push(row);
                 },
-                ServerMsg::CommandComplete(command_tag) => complete = Some(command_tag),
+                ServerMsg::CommandComplete(command_tag) => {
+                    complete = Some(command_tag);
+                },
                 ServerMsg::ReadyForQuery => {
                     if remainder.len() > 0 {
                         return Err(PgError::Error(
@@ -114,7 +128,9 @@ impl Connection {
                     };
                     self.ready_for_query = true;
                 },
-                _ => {}
+                other => {
+                    println!("unexpected data: {:?}", other);
+                },
             }
         }
         Ok(data)
@@ -137,20 +153,35 @@ mod tests {
     fn test_connect() {
         let user_string = env::var("USER").unwrap();
         let user = user_string.as_ref();
-        println!("User: {:?}", user);
         let host = "127.0.0.1";
         let database = Some(user);
-        let conn = Connection::new(user, host, database);
+        let mut conn = Connection::new(user, host, database);
         println!("Connection: {:?}", conn);
         assert!(conn.is_ok());
+    }
+
+    #[test]
+    fn test_query_with_bad_creds() {
+        let user = "notauser";
+        let host = "127.0.0.1";
+        let database = Some("notadb");
+        let mut conn = Connection::new(user, host, database);
+        assert!(conn.is_err());
     }
 
     #[test]
     fn test_query() {
         let user_string = env::var("USER").unwrap();
         let user = user_string.as_ref();
-        let mut conn = Connection::new(user, "127.0.0.1", Some(user)).expect("Could not establish connection");
-        let data = conn.query("SELECT VERSION()").unwrap();
-        assert_eq!(data.len(), 5);
+        let host = "127.0.0.1";
+        let mut conn = Connection::new(user, host, Some(user)).expect("Could not establish connection");
+        let data = conn.query("SELECT VERSION();").unwrap();
+        assert_eq!(data.len(), 1);
+        let ref result = data[0][0];
+        let word = match result.find(' ') {
+            Some(n) => data[0][0].split_at(n).0,
+            None => &result,
+        };  // First word of the version string
+        assert_eq!(word, "PostgreSQL");
     }
 }
