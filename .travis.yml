@@ -1,1 +1,13 @@
 language: rust
+rust:
+  - stable
+  - beta
+  - nightly
+matrix:
+  allow_failures:
+    - rust: nightly
+cache: cargo
+services:
+  - postgresql
+before_script:
+  - createdb -O $USER $USER

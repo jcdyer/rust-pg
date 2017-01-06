@@ -6,13 +6,14 @@ pub trait Message {
         vec!()
     }
     fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        if let Some(id) = self.get_id() {
-            bytes.push(id);
-        }
         let body = self.get_body();
         let length = (body.len() + 4) as u32;
         let length_bytes: [u8; 4] = unsafe { transmute(length.to_be()) }; // or .to_le()
+
+        let mut bytes = Vec::with_capacity(5 + body.len());
+        if let Some(id) = self.get_id() {
+            bytes.push(id);
+        }
         bytes.extend(length_bytes.iter());
         bytes.extend(body);
         bytes
@@ -68,9 +69,6 @@ impl Message for Terminate {
     fn get_id(&self) -> Option<u8> {
         Some(0x58)  // 'X'
     }
-    fn get_body(&self) -> Vec<u8> {
-        vec!()
-    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -81,6 +79,13 @@ pub struct Query {
 impl Message for Query {
     fn get_id(&self) -> Option<u8> {
         Some(0x51)  // 'Q'
+    }
+    fn get_body(&self) -> Vec<u8> {
+        let query_bytes = self.query.as_bytes();
+        let mut body = Vec::with_capacity(query_bytes.len() + 1);
+        body.extend(query_bytes);
+        body.push(0);
+        body
     }
 }
 
