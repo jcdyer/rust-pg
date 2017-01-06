@@ -1,3 +1,4 @@
+use std::collections::vec_deque::VecDeque;
 use std::io::{Read, Write};
 use std::net;
 use std::thread::sleep;
@@ -7,6 +8,19 @@ use error::PgError;
 use message::{Message, StartupMessage, Query, Terminate};
 use servermsg::{take_msg, ServerMsg, AuthMsg};
 
+#[derive(Debug, Eq, PartialEq, Clone)]
+enum ConnectionState {
+    New, 
+    AwaitingAuthResponse, 
+    Authenticated,
+    AuthenticationRejected,
+    ReadyForQuery,
+    AwaitingQueryResponse,
+    AwaitingDataRows,
+    Closed,
+}
+    
+
 #[derive(Debug)]
 pub struct Connection {
     user: String,
@@ -14,10 +28,92 @@ pub struct Connection {
     host: String,
     port: u16,
     socket: net::TcpStream,
-    ready_for_query: bool,
+    state: ConnectionState,
 }
 
 impl Connection {
+    fn initiate_connection(&mut self) -> Result<()> {
+        let startup = StartupMessage {
+            user: &self.user,
+            database: Some(&self.database),
+            params: vec!(),
+        };
+        let bytes_to_send = startup.to_bytes();
+        println!("Startup Message: {:?}", bytes_to_send);
+        try!(self.socket.write_all(&bytes_to_send)); 
+        self.state = ConnectionState::AwaitingAuthResponse;
+        Ok(())
+    }
+
+    fn handle_startup(&mut self) -> Result<()> {
+        let mut buf = Vec::with_capacity(1024);
+        let mut message_queue = VecDeque::new();
+        try!(self.read_from_socket(&mut buf));
+        println!("msg read {:?}", &buf[..]);
+        let mut remainder = &buf[..];
+        while remainder.len() > 0 {
+            let (bytes, excess) = try!(take_msg(remainder));
+            println!("B: {:?}, E: {:?}", bytes, excess);
+            let msg = try!(ServerMsg::from_slice(bytes));
+            println!("Message: {:?}", &msg);
+            message_queue.push_back(msg);
+            remainder = excess;
+        }
+        println!("VecDeque: {:?}", message_queue);
+        loop {
+            match self.state.clone() {
+                ConnectionState::AwaitingAuthResponse => try!(self.handle_auth(&mut message_queue)),
+                ConnectionState::AuthenticationRejected => break,
+                ConnectionState::Authenticated => try!(self.handle_server_info(&mut message_queue)),
+                ConnectionState::ReadyForQuery => {
+                    try!(self.handle_ready_for_query(&mut message_queue));
+                    break;
+                },
+                state => return Err(PgError::Error(format!("Unhandled state: {:?}", state))),
+            }
+        } 
+        Ok(())
+    }
+
+    fn handle_auth<'a>(&mut self, message_queue: &mut VecDeque<ServerMsg<'a>>) -> Result<()> {
+        match message_queue.pop_front() {
+            Some(ServerMsg::Auth(AuthMsg::Ok)) => {
+                self.state = ConnectionState::Authenticated;
+                Ok(())
+            },
+            Some(ServerMsg::Auth(method)) => {
+                Err(PgError::Error(format!("Unimplemented authentication method, {:?}", method)))
+            },
+            Some(ServerMsg::ErrorResponse(err)) => try!(self.handle_error(err)),
+            Some(msg) => Err(PgError::Error(format!("Unexpected Message: {:?}", msg))),
+            None => Err(PgError::Error("Unexpected end of messages".to_string())),
+        }
+    }
+
+    fn handle_server_info<'a>(&mut self, message_queue: &mut VecDeque<ServerMsg<'a>>) -> Result<()> {
+        match message_queue.pop_front() {
+            Some(ServerMsg::ReadyForQuery) => {
+                self.state = ConnectionState::ReadyForQuery;
+                Ok(())
+            },
+            Some(ServerMsg::ErrorResponse(err)) => try!(self.handle_error(err)),
+            Some(msg) => Ok(()),
+            None => return Err(PgError::Error("Unexpected end of messages".to_string())),
+        }
+    }
+
+    fn handle_error<T>(&mut self, err: Vec<&str>) -> Result<T> {
+        let message = err.get(3).unwrap();
+        Err(PgError::Error(message.to_string()))
+    }
+
+    fn handle_ready_for_query<'a>(&mut self, message_queue: &mut VecDeque<ServerMsg<'a>>) -> Result<()> {
+        match message_queue.pop_front() {
+            Some(msg) => Err(PgError::Error(format!("Unexpected message after ReadyForQuery: {:?}", msg))),
+            None => Ok(()),
+        }
+    }
+
     pub fn new(user: &str, host: &str, database: Option<&str>) -> Result<Connection> {
         let database = match database {
             Some(db) => db.to_string(),
@@ -30,76 +126,44 @@ impl Connection {
         try!(socket.set_read_timeout(Some(Duration::new(0, 1))));
         try!(socket.set_nodelay(true));
 
-        let startup = StartupMessage {
-            user: &user,
-            database: Some(&database),
-            params: vec!(),
+        let mut conn = Connection {
+            user: user.clone(),
+            database: database.clone(),
+            host: host,
+            port: port,
+            socket: socket,
+            state: ConnectionState::New,
         };
-        let bytes_to_send = startup.to_bytes();
-        println!("Startup Message: {:?}", bytes_to_send);
-        let mut x = try!(socket.write_all(&bytes_to_send)); 
-        let mut buf = Vec::with_capacity(1024);
-        let mut z = 5;
-        let x = socket.read_to_end(&mut buf);
-        println!("msg read {:?}", &buf[..]);
-        let mut remainder = &buf[..];
-        let mut authorized = false;
-        let mut ready_for_query = false;
-        while remainder.len() > 0 {
-            println!("Authorized? {:?}", authorized);
-            let (bytes, excess) = try!(take_msg(remainder));
-            println!("B: {:?}, E: {:?}", bytes, excess);
-            let msg = try!(ServerMsg::from_slice(bytes));
-            println!("Message: {:?}", msg);
-            remainder = excess;
+        try!(conn.initiate_connection());
+        conn.handle_startup();
+        match conn.state {
+            ConnectionState::ReadyForQuery => Ok(conn),
+            ConnectionState::AuthenticationRejected => Err(PgError::Unauthenticated),
+            state => Err(PgError::Error(format!("Unexpected state: {:?}", state))),
+        }
+    }
 
-            match msg {
-                ServerMsg::Auth(AuthMsg::Ok) => {
-                    println!("Authorized");
-                    authorized = true;
+    fn read_from_socket(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
+        while buf.len() == 0 {
+            match self.socket.read_to_end(buf) {
+                Ok(_) => continue,
+                Err(ioerr) => if let Some(11) = ioerr.raw_os_error() {
+                    continue;
+                } else {
+                    try!(Err(ioerr));
                 },
-                ServerMsg::Auth(method) => {
-                    println!("Unimplemented authentication method, {:?}", method);
-                    return Err(PgError::Other);
-                },
-                ServerMsg::ErrorResponse(err) => {
-                    let message = err.get(3).unwrap();
-                    return Err(PgError::Error(message.to_string()));
-                },
-                ServerMsg::ReadyForQuery => ready_for_query = true,
-                _ => {},
-            };
+            }
         }
-        if authorized == true {
-            Ok(Connection { 
-                user: user.clone(),
-                database: database.clone(),
-                host: host,
-                port: port,
-                socket: socket,
-                ready_for_query: ready_for_query,
-            })
-        } else {
-            Err(PgError::Unauthenticated)
-        }
+        Ok(buf.len())
     }
 
     pub fn query(&mut self, sql: &str) -> Result<Vec<Vec<String>>> {
         let query = Query { query: sql.to_string() };
         println!("Sending query {:?}", query.to_bytes());
         try!(self.socket.write_all(&query.to_bytes()));
-        self.ready_for_query = false;
+        self.state = ConnectionState::AwaitingQueryResponse;
         let mut buf: Vec<u8> = vec!();
-        while buf.len() == 0 {
-            match self.socket.read_to_end(&mut buf) {
-                Ok(_) => break,
-                Err(ioerr) => if let Some(11) = ioerr.raw_os_error() {
-                    continue;
-                } else {
-                    try!(Err(ioerr));
-                }
-            }
-        }
+        try!(self.read_from_socket(&mut buf));
         let mut remainder = &buf[..];
         let mut data = vec![];
         let mut complete = None;
@@ -126,7 +190,7 @@ impl Connection {
                             format!("Received data after ReadyForQuery: {:?}", remainder)
                         ));
                     };
-                    self.ready_for_query = true;
+                    self.state = ConnectionState::ReadyForQuery;
                 },
                 other => {
                     println!("unexpected data: {:?}", other);
