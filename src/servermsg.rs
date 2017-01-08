@@ -58,7 +58,7 @@ mod erg {
         let strlen = find_first(input, b'\0');
         match strlen {
             Some(strlen) => {
-                let string = from_utf8(&input[..strlen]).unwrap();
+                let string = try!(from_utf8(&input[..strlen]));
                 let fixed_data = &input[strlen+1..strlen+1+fixed];
                 let extra = &input[strlen+1+fixed..];
                 Ok((string, fixed_data, extra))
@@ -68,7 +68,7 @@ mod erg {
     }
     pub fn take_sized_string<'a>(input: &'a[u8]) -> Result<(&'a str, &'a[u8])> {
         let size = slice_to_u32(&input[..4]) as usize;
-        let data = from_utf8(&input[4..4+size]).unwrap();
+        let data = try!(from_utf8(&input[4..4+size]));
         let extra = &input[4+size..];
         Ok((data, extra))
     }
@@ -98,16 +98,6 @@ impl <'a> FieldDescription<'a> {
     }
 }
 
-#[inline]
-fn _ascii_byte(input: &str) -> u8 {
-    let bytes = input.as_bytes();
-    if bytes.len() == 1 {
-        bytes[0]
-    } else {
-        panic!("Not an ascii byte")
-    }
-}
-
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ServerMsg<'a> {
@@ -129,7 +119,7 @@ impl <'a> ServerMsg<'a> {
         if message.len() != length {
             return Err(PgError::Error(format!("Wrong length for message.  Expected {}.  Found {}.", length, message.len())))
         }
-        let identifier = from_utf8(&message[..1]).unwrap();
+        let identifier = try!(from_utf8(&message[..1]));
         let (_, extra) = message.split_at(5);
         match identifier {
             "R" => {
@@ -137,8 +127,8 @@ impl <'a> ServerMsg<'a> {
             },
             "S" => {  // Parameter Status
                 let mut param_iter = extra.split(|c| c == &0); // split on nulls
-                let name = from_utf8(param_iter.next().unwrap()).unwrap();
-                let value = from_utf8(param_iter.next().unwrap()).unwrap();
+                let name = try!(from_utf8(param_iter.next().unwrap()));
+                let value = try!(from_utf8(param_iter.next().unwrap()));
                 let nothing = param_iter.next().unwrap(); // The second null is the terminator
                 if nothing != [] {
                     Err(PgError::Error(format!("Extra value after param status: {:?}", nothing)))
