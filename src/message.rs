@@ -20,13 +20,6 @@ pub trait Message {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum TransactionStatus {
-    Idle,
-    Transaction,
-    Failed,
-}
-
 // Message types
 
 #[derive(Debug, Eq, PartialEq)]
