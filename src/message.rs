@@ -29,6 +29,12 @@ pub struct StartupMessage<'a> {
     pub params: Vec<(String, String)>,
 }
 
+fn extend_string(body: &mut Vec<u8>, s: &str) {
+    body.extend(s.as_bytes());
+    body.push(0);
+
+}
+
 impl <'a> Message for StartupMessage<'a> {
     fn get_id(&self) -> Option<u8> {
         None
@@ -36,25 +42,34 @@ impl <'a> Message for StartupMessage<'a> {
     fn get_body(&self) -> Vec<u8> {
         let mut body: Vec<u8> = Vec::with_capacity(256);
         body.extend(&[0, 3, 0, 0]);
-        body.extend("user\0".as_bytes());
-        body.extend(self.user.as_bytes());
-        body.push(0);
+        extend_string(&mut body, "user");
+        extend_string(&mut body, self.user);
         if let Some(ref db) = self.database {
-            body.extend("database\0".as_bytes());
-            body.extend(db.as_bytes());
-            body.push(0);
+            extend_string(&mut body, "database");
+            extend_string(&mut body, db);
         }
         for &(ref param, ref value) in &self.params {
-            body.extend(param.as_bytes());
-            body.push(0);
-            body.extend(value.as_bytes());
-            body.push(0);
+            extend_string(&mut body, param);
+            extend_string(&mut body, value);
         }
         body.push(0);
         body
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct PasswordMessage<'a> {
+    pub hash: &'a str,
+}
+
+impl <'a> Message for PasswordMessage<'a> {
+    fn get_id(&self) -> Option<u8> {
+        Some(0x70)
+    }
+
+
+}
+        
 #[derive(Debug, Eq, PartialEq)]
 pub struct Terminate;
 
@@ -74,10 +89,8 @@ impl Message for Query {
         Some(0x51)  // 'Q'
     }
     fn get_body(&self) -> Vec<u8> {
-        let query_bytes = self.query.as_bytes();
-        let mut body = Vec::with_capacity(query_bytes.len() + 1);
-        body.extend(query_bytes);
-        body.push(0);
+        let mut body = Vec::with_capacity(self.query.as_bytes().len() + 1);
+        extend_string(&mut body, &self.query);
         body
     }
 }

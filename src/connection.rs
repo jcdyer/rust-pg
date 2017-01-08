@@ -76,6 +76,9 @@ impl Connection {
                 self.state = ConnectionState::Authenticated;
                 Ok(())
             },
+            Some(ServerMsg::Auth(AuthMsg::Md5(salt))) => {
+                Ok(())
+            },
             Some(ServerMsg::Auth(method)) => {
                 Err(PgError::Error(format!("Unimplemented authentication method, {:?}", method)))
             },
