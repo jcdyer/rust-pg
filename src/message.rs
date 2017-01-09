@@ -64,10 +64,14 @@ pub struct PasswordMessage<'a> {
 
 impl <'a> Message for PasswordMessage<'a> {
     fn get_id(&self) -> Option<u8> {
-        Some(0x70)
+        Some(0x70) // 'p'
     }
 
-
+    fn get_body(&self) -> Vec<u8> {
+        let mut body = vec!();
+        extend_string(&mut body, self.hash);
+        body
+    }
 }
         
 #[derive(Debug, Eq, PartialEq)]
@@ -103,7 +107,7 @@ mod tests {
     fn test_terminate() {
         assert_eq!(
             Terminate.to_bytes(),
-            b"\x58\0\0\0\x04"
+            b"\x58\0\0\0\x04".to_vec()
         );
     }
 
@@ -118,8 +122,30 @@ mod tests {
             ],
         };
         assert_eq!(
-            &msg.to_bytes()[..],
-            &b"\0\0\0\x2d\x00\x03\x00\x00user\0cliff\0name\0Theseus\0vessel\0ship\0\0"[..]
+            msg.to_bytes(),
+            b"\0\0\0\x2d\x00\x03\x00\x00user\0cliff\0name\0Theseus\0vessel\0ship\0\0".to_vec()
+        );
+    }
+
+    #[test]
+    fn test_password_message() {
+        let msg = PasswordMessage {
+            hash: "open sesame",
+        };
+        assert_eq!(
+            msg.to_bytes(),
+            b"p\0\0\0\x10open sesame\0".to_vec()
+        );
+    }
+
+    #[test]
+    fn test_query_message() {
+        let msg = Query {
+            query: "SELECT 1".to_string(),
+        };
+        assert_eq!(
+            msg.to_bytes(),
+            b"Q\0\0\0\x0dSELECT 1\0".to_vec()
         );
     }
 }
