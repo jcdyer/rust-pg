@@ -1,6 +1,6 @@
 [package]
 name = "pg"
-description = "Postgresql Client Library"
+description = "Postgresql client library"
 version = "0.1.0"
 authors = ["J. Cliff Dyer <cdyer@edx.org>"]
 
