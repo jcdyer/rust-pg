@@ -5,10 +5,10 @@ use std::time::Duration;
 use Result;
 use auth;
 use error::PgError;
-use message::{Message, StartupMessage, Query, PasswordMessage};
+use message::{Message, StartupMessage, Query, PasswordMessage, Terminate};
 use servermsg::{take_msg, ServerMsg, AuthMsg};
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Copy, Debug, Eq, PartialEq, Clone)]
 enum ConnectionState {
     New, 
     AwaitingAuthResponse, 
@@ -17,7 +17,7 @@ enum ConnectionState {
     ReadyForQuery,
     AwaitingQueryResponse,
     AwaitingDataRows,
-    Closed,
+    Disconnected,
 }
     
 
@@ -210,6 +210,17 @@ impl Connection {
             }
         }
         Ok(data)
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        let msg = Terminate;
+        let bytes_to_send = msg.to_bytes();
+        println!("{:?}", msg);
+        self.socket.write_all(&bytes_to_send); 
+        // self.socket.drop();
+        self.state = ConnectionState::Disconnected;
     }
 }
 
