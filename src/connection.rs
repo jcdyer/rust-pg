@@ -54,7 +54,7 @@ impl Connection {
             let mut buf = Vec::with_capacity(1024);
             let mut message_queue = VecDeque::new();
             try!(self.read_from_socket(&mut buf));
-            remainder = &buf[..];
+            let mut remainder = &buf[..];
             while remainder.len() > 0 {
                 let (bytes, excess) = try!(take_msg(remainder));
                 let msg = try!(ServerMsg::from_slice(bytes));

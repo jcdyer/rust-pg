@@ -8,7 +8,7 @@ pub trait Message {
     fn to_bytes(&self) -> Vec<u8> {
         let body = self.get_body();
         let length = (body.len() + 4) as u32;
-        let length_bytes: [u8; 4] = unsafe { transmute(length.to_be()) }; // or .to_le()
+        let length_bytes: [u8; 4] = unsafe { transmute(length.to_be()) };
 
         let mut bytes = Vec::with_capacity(5 + body.len());
         if let Some(id) = self.get_id() {
