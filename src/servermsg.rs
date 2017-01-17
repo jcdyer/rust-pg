@@ -143,10 +143,11 @@ impl <'a> ServerMsg<'a> {
             },
             "T" => {  // Row Description
                 let field_count = slice_to_u16(&extra[..2]);
+                println!("Field count: {:?}", field_count);
                 let mut extra = &extra[2..];
                 let mut fields = vec![];
 
-                for _ in [..field_count].iter() {
+                for _ in 0..field_count {
                     let (name, bytes, rem) = FieldDescription::take_field(extra).unwrap();
                     let fd = FieldDescription::new(name, bytes).unwrap();
                     fields.push(fd);
@@ -155,14 +156,14 @@ impl <'a> ServerMsg<'a> {
                 if extra == &b""[..] {
                     Ok(ServerMsg::RowDescription(fields))
                 } else {
-                    Err(PgError::Error(format!("Unexpected extra data in row description: {:?}", extra)))
+                    Err(PgError::Error(format!("Unexpected extra data in row description: {:?} {:?}", fields, extra)))
                 }
             },
             "D" => {  // Data Row
                 let field_count = slice_to_u16(&extra[..2]);
                 let mut extra = &extra[2..];
                 let mut fields = vec![];
-                for _ in [..field_count].iter() {
+                for _ in 0..field_count {
                     let (string, more) = take_sized_string(extra).unwrap();
                     fields.push(string);
                     extra = more;
