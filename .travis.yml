@@ -11,5 +11,5 @@ services:
   - postgresql
 before_script:
   - createdb -O $USER $USER
-  - echo "CREATE TABLE presidents (name VARCHAR(255), inauguration DATE, ordinal INTEGER)" | psql -u $USER -d $USER
-  - echo "COPY presidents FROM 'tests/data/presidents.csv' ( FORMAT CSV, DELIMITER('|') )" | psql -u $USER -d $USER
+  - psql -U $USER -d $USER -c "CREATE TABLE presidents (name VARCHAR(255), inauguration DATE, ordinal INTEGER)"
+  - cat test/data/presidents.csv | psql -U $USER -d $USER -c "COPY presidents FROM STDIN ( FORMAT CSV, DELIMITER('|'), HEADER TRUE )"
