@@ -4,6 +4,7 @@ Demo postgres connector
 
 from __future__ import print_function, unicode_literals
 
+from hashlib import md5
 import os
 import socket
 import struct
@@ -53,6 +54,18 @@ def send_startup_message(sock):
     return receive(sock)
 
 
+def md5_hash_password(username, password, salt):
+    userpasshash = md5(''.join([password, username]).encode('utf-8')).hexdigest().encode('ascii')
+    saltedhash = md5(b''.join([userpasshash, salt])).hexdigest()
+    return ''.join(['md5', saltedhash])
+    
+def send_md5_password(sock, username, password, salt):
+    pwhash = md5_hash_password(username, password, salt)
+    pw_message = create_message(b'p', pwhash.encode('ascii') + b'\0')
+    print(repr(pw_message))
+    sock.sendall(pw_message)
+    return receive(sock)
+
 def send_terminate(sock):
     """
     End the connection
@@ -95,6 +108,14 @@ def main():
         sock.connect(('localhost', 5432))
         response = send_startup_message(sock)
         print("Startup response")
+        print(response)
+        for msg in iter_msgs(response):
+            parse_msg(msg)
+        print()
+        salt = response[-4:]
+
+        response = send_md5_password(sock, 'cliff', 'cliff', salt)
+        print("Password message")
         print(response)
         for msg in iter_msgs(response):
             parse_msg(msg)

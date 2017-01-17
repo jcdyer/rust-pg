@@ -53,7 +53,6 @@ impl Connection {
         } {
             let mut buf = Vec::with_capacity(1024);
             let mut message_queue = VecDeque::new();
-            let mut remainder: &[u8] = b"";
             try!(self.read_from_socket(&mut buf));
             remainder = &buf[..];
             while remainder.len() > 0 {
@@ -218,8 +217,12 @@ impl Drop for Connection {
         let msg = Terminate;
         let bytes_to_send = msg.to_bytes();
         println!("{:?}", msg);
-        self.socket.write_all(&bytes_to_send); 
-        // self.socket.drop();
+        match self.socket.write_all(&bytes_to_send) {
+            Ok(_) => {},
+            error => {
+                println!("WARNING: An error occurred ending the session with the server: {:?}", error);
+            },
+        };
         self.state = ConnectionState::Disconnected;
     }
 }
