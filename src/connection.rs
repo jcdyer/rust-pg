@@ -95,7 +95,10 @@ impl Connection {
             Some(ServerMsg::Auth(method)) => {
                 Err(PgError::Error(format!("Unimplemented authentication method, {:?}", method)))
             },
-            Some(ServerMsg::ErrorResponse(err)) => try!(self.handle_error(err)),
+            Some(ServerMsg::ErrorResponse(err)) => {
+                self.state = ConnectionState::AuthenticationRejected;
+                try!(self.handle_error(err))
+            },
             Some(msg) => Err(PgError::Error(format!("Unexpected non-auth message: {:?}", msg))),
             None => Err(PgError::Error("No message received".to_string())),
         }
